@@ -1,2 +1,4 @@
 torch
 pytest
+numpy
+debugpy
