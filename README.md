@@ -1,3 +1,4 @@
 # Distributed Pytest Utils
 
-Shamelessly stolen from/inspired by DeepSpeed.
+Shamelessly stolen from/inspired by DeepSpeed, then simplified.
+
