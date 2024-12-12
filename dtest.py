@@ -74,11 +74,7 @@ def print_rank0_only(s, *args, **kwargs):
         )
 
 
-# Worker timeout for tests that hang
-DEEPSPEED_TEST_TIMEOUT = int(os.environ.get("DS_UNITTEST_TIMEOUT", "600"))
-
-
-def get_master_port(base_port: int = 29500, port_range_size: int = 1000) -> str:
+def _get_master_port(base_port: int = 29500, port_range_size: int = 1000) -> str:
     # Select first open port in range
     port = base_port
     max_port = base_port + port_range_size
@@ -140,7 +136,6 @@ class DTest:
     world_size = 2
     backend = get_backend()
     requires_cuda_env = True
-    exec_timeout = DEEPSPEED_TEST_TIMEOUT
     start_method = "spawn"
 
     def __call__(self, request):
@@ -193,7 +188,7 @@ class DTest:
         mp_context = mp.get_context(self.start_method)
         # mp.set_start_method("forkserver", force=True)
         # pool = mp.Pool(processes=world_size)
-        master_port = get_master_port()
+        master_port = _get_master_port()
 
         # Run the test
         skip_msg_q = mp_context.Queue()
