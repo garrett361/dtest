@@ -22,3 +22,9 @@ def pytest_runtest_call(item):
         dist_test_class = item.cls()
         dist_test_class(item._request)
         item.runtest = lambda: True  # Dummy function so test is not run twice
+
+
+def pytest_configure(config):
+    config.addinivalue_line("markers", "world_size(s)")
+    config.addinivalue_line("markers", "cpu")
+    config.addinivalue_line("markers", "gpu")

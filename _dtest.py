@@ -11,7 +11,6 @@ import inspect
 import multiprocessing as mp
 import os
 import socket
-from functools import cache
 from typing import Union, Literal
 import textwrap
 
@@ -85,6 +84,8 @@ class DTest:
     backend = None
     requires_cuda_env = True
     start_method = "spawn"
+    _force_gpu = False
+    _force_cpu = False
 
     def __call__(self, request):
         self._current_test = self._get_current_test_func(request)
@@ -93,11 +94,13 @@ class DTest:
         if self.requires_cuda_env and not torch.cuda.is_available():
             pytest.skip("only supported in accelerator environments.")
 
+        # Process DTest specific marks: {world_size, gpu, cpu}
+        mark_dict = {
+            mark.name: mark for mark in getattr(request.function, "pytestmark", [])
+        }
         # Catch world_size override pytest mark
-        for mark in getattr(request.function, "pytestmark", []):
-            if mark.name == "world_size":
-                world_sizes = mark.args[0]
-                break
+        if "world_size" in mark_dict:
+            world_sizes = mark_dict["world_size"].args[0]
         else:
             world_sizes = self._fixture_kwargs.get("world_size", self.world_size)
 
@@ -109,8 +112,20 @@ class DTest:
 
         if isinstance(world_sizes, int):
             world_sizes = [world_sizes]
-        for ws in world_sizes:
-            self._launch_procs(ws)
+
+        if "cpu" in mark_dict and "gpu" in mark_dict:
+            raise ValueError("Only one of 'cpu' or 'gpu' may be marked")
+        if "cpu" in mark_dict:
+            self._force_cpu = True
+        if "gpu" in mark_dict:
+            self._force_gpu = True
+
+        try:
+            for ws in world_sizes:
+                self._launch_procs(ws)
+        finally:
+            self._force_gpu = False
+            self._force_cpu = False
 
     def _get_current_test_func(self, request):
         # DistributedTest subclasses may have multiple test methods
@@ -138,10 +153,7 @@ class DTest:
                 f"Skipping test because not enough GPUs are available: {world_size} required, {self.get_num_gpus()} available"
             )
 
-        # Set start method to `forkserver` (or `fork`)
         mp_context = mp.get_context(self.start_method)
-        # mp.set_start_method("forkserver", force=True)
-        # pool = mp.Pool(processes=world_size)
         master_port = _get_master_port()
 
         # Run the test
@@ -176,12 +188,11 @@ class DTest:
 
         if torch.cuda.is_available():
             torch.cuda.set_device(rank)
-
         dist.init_process_group(
-            backend=None or self.get_backend(),
+            backend=self.get_backend(),
             rank=rank,
             world_size=world_size,
-            device_id=self.get_device(),
+            device_id=self.get_device() if self.get_backend() == "nccl" else None,
         )
         dist.barrier()
 
@@ -198,31 +209,32 @@ class DTest:
         finally:
             dist.destroy_process_group()
 
-    @cache
     def get_rank(self) -> int:
         return int(os.getenv("RANK", 0))
 
-    @cache
     def get_world_size(self) -> int:
         return int(os.getenv("WORLD_SIZE", 1))
 
-    @cache
     def get_device_type(self) -> str:
-        if torch.cuda.is_available():
+        if self._force_gpu:
             return "cuda"
-        return "cpu"
+        elif self._force_cpu:
+            return "cpu"
+        return "cuda" if torch.cuda.is_available() else "cpu"
 
-    @cache
     def get_device(self) -> torch.device:
         if torch.cuda.is_available():
             return torch.device(f"{self.get_device_type()}:{self.get_rank()}")
         return torch.device(f"{self.get_device_type()}:{self.get_rank()}")
 
-    @cache
     def get_backend(self) -> str:
+        if self._force_gpu:
+            return "nccl"
+        elif self._force_cpu:
+            return "gloo"
+
         return "nccl" if torch.cuda.is_available() else "gloo"
 
-    @cache
     def get_num_gpus(self) -> int:
         if self.get_device_type() != "cuda":
             return 0
