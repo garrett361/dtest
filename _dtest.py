@@ -157,9 +157,10 @@ class DTest:
         master_port = _get_master_port()
 
         # Run the test
-        skip_msg_q = mp_context.Queue()
+        ex_q = mp_context.Queue()
+        skip_q = mp_context.Queue()
         args_list = [
-            (rank, world_size, master_port, skip_msg_q) for rank in range(world_size)
+            (rank, world_size, master_port, skip_q, ex_q) for rank in range(world_size)
         ]
         procs = [
             mp_context.Process(target=self._dist_run, args=args) for args in args_list
@@ -169,13 +170,19 @@ class DTest:
         for p in procs:
             p.join()
 
-        if not skip_msg_q.empty():
-            # This assumed all skip messages are the same, it may be useful to
-            # add a check here to assert all exit messages are equal
-            pytest.skip(skip_msg_q.get())
+        if not skip_q.empty():
+            pytest.skip(skip_q.get())
+        if not ex_q.empty():
+            print(f"Found exception: {ex_q.get()}")
+            raise
 
     def _dist_run(
-        self, rank: int, world_size: int, master_port: str, skip_msg_q: mp.Queue
+        self,
+        rank: int,
+        world_size: int,
+        master_port: str,
+        skip_q: mp.Queue,
+        ex_q: mp.Queue,
     ):
         """Initialize deepspeed.comm and execute the user function."""
         os.environ["MASTER_ADDR"] = "127.0.0.1"
@@ -200,11 +207,9 @@ class DTest:
             self._current_test(**self._fixture_kwargs)
         except BaseException as e:
             if isinstance(e, Skipped):
-                if not self.get_rank():
-                    print(f"Caught pytest.skip: {e}")
-                    skip_msg_q.put(e.msg)
-                raise e
+                skip_q.put(e.msg)
             else:
+                ex_q.put(str(e))
                 raise e
         finally:
             dist.destroy_process_group()

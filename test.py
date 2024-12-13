@@ -18,6 +18,10 @@ class TestDTest(DTest):
     def test_skip(self) -> None:
         pytest.skip("I should be skipped")
 
+    def test_fail(self) -> None:
+        self.print_rank0_only("I should fail")
+        assert False
+
     @pytest.mark.world_size([2, 3, 4])
     def test_world_sizes(self) -> None:
         self.print_rank0_only(f"{self.get_world_size()=}")
