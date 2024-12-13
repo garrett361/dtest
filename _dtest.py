@@ -174,6 +174,7 @@ class DTest:
             backend=None or self.get_backend(),
             rank=rank,
             world_size=world_size,
+            device_id=self.get_device(),
         )
         dist.barrier()
 
