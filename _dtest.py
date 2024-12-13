@@ -193,11 +193,11 @@ class DTest:
 
     @cache
     def get_rank(self) -> int:
-        return int(os.environ["RANK"], 0)
+        return int(os.getenv("RANK", 0))
 
     @cache
     def get_world_size(self) -> int:
-        return int(os.environ["WORLD_SIZE"], 1)
+        return int(os.getenv("WORLD_SIZE", 1))
 
     @cache
     def get_device_type(self) -> str:
