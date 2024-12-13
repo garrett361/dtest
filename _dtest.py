@@ -12,6 +12,7 @@ import multiprocessing as mp
 import os
 import socket
 from functools import cache
+from typing import Union, Literal
 import textwrap
 
 import pytest
@@ -80,7 +81,7 @@ class DTest:
                 assert all(val1, val2, val3, val4)
     """
 
-    world_size = 2
+    world_size: Union[int, Literal["auto"]] = "auto"
     backend = None
     requires_cuda_env = True
     start_method = "spawn"
@@ -99,6 +100,12 @@ class DTest:
                 break
         else:
             world_sizes = self._fixture_kwargs.get("world_size", self.world_size)
+
+        # If world_size = "auto", try to read from CUDA_VISIBLE_DEVICES, otherwise default to 2
+        if isinstance(world_sizes, str):
+            if world_sizes != "auto":
+                raise ValueError("The only valid string for world_size is 'auto'")
+            world_sizes = self.get_num_gpus() or 2
 
         if isinstance(world_sizes, int):
             world_sizes = [world_sizes]
