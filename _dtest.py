@@ -21,59 +21,6 @@ from _pytest.fixtures import FixtureLookupError
 from _pytest.outcomes import Skipped
 
 
-@cache
-def get_rank() -> int:
-    return int(os.environ["RANK"])
-
-
-@cache
-def get_world_size() -> int:
-    return int(os.environ["WORLD_SIZE"])
-
-
-@cache
-def get_device_type() -> str:
-    if torch.cuda.is_available():
-        return "cuda"
-    return "cpu"
-
-
-@cache
-def get_device() -> torch.device:
-    if torch.cuda.is_available():
-        return torch.device(f"{get_device_type()}:{get_rank()}")
-    return torch.device(f"{get_device_type()}:{get_rank()}")
-
-
-@cache
-def get_backend() -> str:
-    return "nccl" if torch.cuda.is_available() else "gloo"
-
-
-@cache
-def get_num_gpus() -> int:
-    if get_device_type() != "cuda":
-        return 0
-    return len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
-
-
-def print_rank(s, *args, **kwargs):
-    print(
-        "\n".join(textwrap.wrap(s, initial_indent=f"[rank={get_rank()}] ")),
-        *args,
-        **kwargs,
-    )
-
-
-def print_rank0_only(s, *args, **kwargs):
-    if not get_rank():
-        print(
-            "\n".join(textwrap.wrap(s, initial_indent=f"[rank={get_rank()}] ")),
-            *args,
-            **kwargs,
-        )
-
-
 def _get_master_port(base_port: int = 29500, port_range_size: int = 1000) -> str:
     # Select first open port in range
     port = base_port
@@ -134,7 +81,7 @@ class DTest:
     """
 
     world_size = 2
-    backend = get_backend()
+    backend = None
     requires_cuda_env = True
     start_method = "spawn"
 
@@ -179,9 +126,9 @@ class DTest:
 
     def _launch_procs(self, world_size):
         # Verify we have enough accelerator devices to run this test
-        if get_device_type() != "cpu" and get_num_gpus() < world_size:
+        if self.get_device_type() != "cpu" and self.get_num_gpus() < world_size:
             pytest.skip(
-                f"Skipping test because not enough GPUs are available: {world_size} required, {get_num_gpus()} available"
+                f"Skipping test because not enough GPUs are available: {world_size} required, {self.get_num_gpus()} available"
             )
 
         # Set start method to `forkserver` (or `fork`)
@@ -224,7 +171,7 @@ class DTest:
             torch.cuda.set_device(rank)
 
         dist.init_process_group(
-            backend=self.backend,
+            backend=None or self.get_backend(),
             rank=rank,
             world_size=world_size,
         )
@@ -234,7 +181,7 @@ class DTest:
             self._current_test(**self._fixture_kwargs)
         except BaseException as e:
             if isinstance(e, Skipped):
-                if not get_rank():
+                if not self.get_rank():
                     print(f"Caught pytest.skip: {e}")
                     skip_msg_q.put(e.msg)
                 raise e
@@ -242,3 +189,50 @@ class DTest:
                 raise e
         finally:
             dist.destroy_process_group()
+
+    @cache
+    def get_rank(self) -> int:
+        return int(os.environ["RANK"], 0)
+
+    @cache
+    def get_world_size(self) -> int:
+        return int(os.environ["WORLD_SIZE"], 1)
+
+    @cache
+    def get_device_type(self) -> str:
+        if torch.cuda.is_available():
+            return "cuda"
+        return "cpu"
+
+    @cache
+    def get_device(self) -> torch.device:
+        if torch.cuda.is_available():
+            return torch.device(f"{self.get_device_type()}:{self.get_rank()}")
+        return torch.device(f"{self.get_device_type()}:{self.get_rank()}")
+
+    @cache
+    def get_backend(self) -> str:
+        return "nccl" if torch.cuda.is_available() else "gloo"
+
+    @cache
+    def get_num_gpus(self) -> int:
+        if self.get_device_type() != "cuda":
+            return 0
+        return len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
+
+    def print_rank(self, s, *args, **kwargs):
+        print(
+            "\n".join(textwrap.wrap(s, initial_indent=f"[rank={self.get_rank()}] ")),
+            *args,
+            **kwargs,
+        )
+
+    def print_rank0_only(self, s, *args, **kwargs):
+        if not self.get_rank():
+            print(
+                "\n".join(
+                    textwrap.wrap(s, initial_indent=f"[rank={self.get_rank()}] ")
+                ),
+                *args,
+                **kwargs,
+            )
