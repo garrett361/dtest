@@ -174,7 +174,7 @@ class DTest:
             pytest.skip(skip_q.get())
         if not ex_q.empty():
             print(f"Found exception: {ex_q.get()}")
-            raise
+            raise RuntimeError
 
     def _dist_run(
         self,
