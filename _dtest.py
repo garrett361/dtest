@@ -40,9 +40,8 @@ class DTest:
     """
     Implementation for running pytest with distributed execution.
 
-    There are 2 parameters that can be modified:
-        - world_size: Union[int,List[int]] = 2 -- the number of processes to launch
-        - backend: Literal['nccl','mpi','gloo'] = 'nccl' -- which backend to use
+    Args:
+        - set_world_size: int | "auto" = "auto" -- the number of processes to launch.
 
     Features:
         - able to call pytest.skip() inside tests
@@ -63,7 +62,7 @@ class DTest:
         @pytest.mark.fast
         @pytest.mark.parametrize("val2", [30,40])
         class TestExample(DistributedTest):
-            world_size = 2
+            set_world_size = 2
 
             @pytest.fixture(params=[50,60])
             def val3(self, request):
@@ -80,8 +79,7 @@ class DTest:
                 assert all(val1, val2, val3, val4)
     """
 
-    world_size: Union[int, Literal["auto"]] = "auto"
-    backend = None
+    set_world_size: Union[int, Literal["auto"]] = "auto"
     requires_cuda_env = True
     start_method = "spawn"
     _force_gpu = False
@@ -102,13 +100,13 @@ class DTest:
         if "world_size" in mark_dict:
             world_sizes = mark_dict["world_size"].args[0]
         else:
-            world_sizes = self._fixture_kwargs.get("world_size", self.world_size)
+            world_sizes = self._fixture_kwargs.get("world_size", self.set_world_size)
 
         # If world_size = "auto", try to read from CUDA_VISIBLE_DEVICES, otherwise default to 2
         if isinstance(world_sizes, str):
             if world_sizes != "auto":
                 raise ValueError("The only valid string for world_size is 'auto'")
-            world_sizes = self.get_num_gpus() or 2
+            world_sizes = self.num_gpus() or 2
 
         if isinstance(world_sizes, int):
             world_sizes = [world_sizes]
@@ -148,9 +146,9 @@ class DTest:
 
     def _launch_procs(self, world_size):
         # Verify we have enough accelerator devices to run this test
-        if self.get_device_type() != "cpu" and self.get_num_gpus() < world_size:
+        if self.device_type != "cpu" and self.num_gpus() < world_size:
             pytest.skip(
-                f"Skipping test because not enough GPUs are available: {world_size} required, {self.get_num_gpus()} available"
+                f"Skipping test because not enough GPUs are available: {world_size} required, {self.num_gpus()} available"
             )
 
         mp_context = mp.get_context(self.start_method)
@@ -196,10 +194,10 @@ class DTest:
         if torch.cuda.is_available():
             torch.cuda.set_device(rank)
         dist.init_process_group(
-            backend=self.get_backend(),
+            backend=self.backend,
             rank=rank,
             world_size=world_size,
-            device_id=self.get_device() if self.get_backend() == "nccl" else None,
+            device_id=self.device if self.backend == "nccl" else None,
         )
         dist.barrier()
 
@@ -214,25 +212,30 @@ class DTest:
         finally:
             dist.destroy_process_group()
 
-    def get_rank(self) -> int:
+    @property
+    def rank(self) -> int:
         return int(os.getenv("RANK", 0))
 
-    def get_world_size(self) -> int:
+    @property
+    def world_size(self) -> int:
         return int(os.getenv("WORLD_SIZE", 1))
 
-    def get_device_type(self) -> str:
+    @property
+    def device_type(self) -> str:
         if self._force_gpu:
             return "cuda"
         elif self._force_cpu:
             return "cpu"
         return "cuda" if torch.cuda.is_available() else "cpu"
 
-    def get_device(self) -> torch.device:
+    @property
+    def device(self) -> torch.device:
         if torch.cuda.is_available():
-            return torch.device(f"{self.get_device_type()}:{self.get_rank()}")
-        return torch.device(f"{self.get_device_type()}:{self.get_rank()}")
+            return torch.device(f"{self.device_type}:{self.rank}")
+        return torch.device(f"{self.device_type}:{self.rank}")
 
-    def get_backend(self) -> str:
+    @property
+    def backend(self) -> str:
         if self._force_gpu:
             return "nccl"
         elif self._force_cpu:
@@ -240,24 +243,22 @@ class DTest:
 
         return "nccl" if torch.cuda.is_available() else "gloo"
 
-    def get_num_gpus(self) -> int:
-        if self.get_device_type() != "cuda":
+    def num_gpus(self) -> int:
+        if self.device_type != "cuda":
             return 0
         return len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
 
     def print_rank(self, s, *args, **kwargs):
         print(
-            "\n".join(textwrap.wrap(s, initial_indent=f"[rank={self.get_rank()}] ")),
+            "\n".join(textwrap.wrap(s, initial_indent=f"[rank={self.rank}] ")),
             *args,
             **kwargs,
         )
 
     def print_rank0_only(self, s, *args, **kwargs):
-        if not self.get_rank():
+        if not self.rank:
             print(
-                "\n".join(
-                    textwrap.wrap(s, initial_indent=f"[rank={self.get_rank()}] ")
-                ),
+                "\n".join(textwrap.wrap(s, initial_indent=f"[rank={self.rank}] ")),
                 *args,
                 **kwargs,
             )

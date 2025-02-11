@@ -8,10 +8,10 @@ class TestDTest(DTest):
     requires_cuda_env = False
 
     def test_basic(self) -> None:
-        print(f"{self.get_rank()=}")
+        print(f"{self.rank=}")
 
     def test_all_reduce(self) -> None:
-        t = torch.arange(self.get_world_size(), device=self.get_device())
+        t = torch.arange(self.world_size, device=self.device)
         dist.all_reduce(t)
         self.print_rank(f"{t=}")
 
@@ -24,7 +24,7 @@ class TestDTest(DTest):
 
     @pytest.mark.world_size([2, 3, 4])
     def test_world_sizes(self) -> None:
-        self.print_rank0_only(f"{self.get_world_size()=}")
+        self.print_rank0_only(f"{self.world_size=}")
 
     @pytest.mark.parametrize("n", (2, 3, 4))
     def test_parametrize(self, n) -> None:
