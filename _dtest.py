@@ -185,7 +185,7 @@ class DTest:
         # turn off NCCL logging if set
         os.environ.pop("NCCL_DEBUG", None)
 
-        if torch.cuda.is_available():
+        if self.device_type == "cuda":
             torch.cuda.set_device(rank)
         dist.init_process_group(
             backend=self.backend,
@@ -218,21 +218,19 @@ class DTest:
     def device_type(self) -> str:
         if self._force_gpu:
             return "cuda"
-        elif self._force_cpu:
+        elif self._force_cpu or not self.requires_cuda_env:
             return "cpu"
         return "cuda" if torch.cuda.is_available() else "cpu"
 
     @property
     def device(self) -> torch.device:
-        if torch.cuda.is_available():
-            return torch.device(f"{self.device_type}:{self.rank}")
         return torch.device(f"{self.device_type}:{self.rank}")
 
     @property
     def backend(self) -> str:
         if self._force_gpu:
             return "nccl"
-        elif self._force_cpu:
+        elif self._force_cpu or not self.requires_cuda_env:
             return "gloo"
 
         return "nccl" if torch.cuda.is_available() else "gloo"
