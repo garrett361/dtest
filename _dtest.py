@@ -41,7 +41,7 @@ class DTest:
     Implementation for running pytest with distributed execution.
 
     Args:
-        - set_world_size: int | "auto" = "auto" -- the number of processes to launch.
+        - default_world_size: int | "auto" = "auto" -- the number of processes to launch.
 
     Features:
         - able to call pytest.skip() inside tests
@@ -62,7 +62,7 @@ class DTest:
         @pytest.mark.fast
         @pytest.mark.parametrize("val2", [30,40])
         class TestExample(DistributedTest):
-            set_world_size = 2
+            default_world_size = 2
 
             @pytest.fixture(params=[50,60])
             def val3(self, request):
@@ -79,7 +79,7 @@ class DTest:
                 assert all(val1, val2, val3, val4)
     """
 
-    set_world_size: Union[int, Literal["auto"]] = "auto"
+    default_world_size: Union[int, Literal["auto"]] = "auto"
     requires_cuda_env = True
     start_method = "spawn"
     _force_gpu = False
@@ -93,14 +93,12 @@ class DTest:
             pytest.skip("only supported in accelerator environments.")
 
         # Process DTest specific marks: {world_size, gpu, cpu}
-        mark_dict = {
-            mark.name: mark for mark in getattr(request.function, "pytestmark", [])
-        }
+        mark_dict = {mark.name: mark for mark in getattr(request.function, "pytestmark", [])}
         # Catch world_size override pytest mark
         if "world_size" in mark_dict:
             world_sizes = mark_dict["world_size"].args[0]
         else:
-            world_sizes = self._fixture_kwargs.get("world_size", self.set_world_size)
+            world_sizes = self._fixture_kwargs.get("world_size", self.default_world_size)
 
         # If world_size = "auto", try to read from CUDA_VISIBLE_DEVICES, otherwise default to 2
         if isinstance(world_sizes, str):
@@ -157,12 +155,8 @@ class DTest:
         # Run the test
         ex_q = mp_context.Queue()
         skip_q = mp_context.Queue()
-        args_list = [
-            (rank, world_size, master_port, skip_q, ex_q) for rank in range(world_size)
-        ]
-        procs = [
-            mp_context.Process(target=self._dist_run, args=args) for args in args_list
-        ]
+        args_list = [(rank, world_size, master_port, skip_q, ex_q) for rank in range(world_size)]
+        procs = [mp_context.Process(target=self._dist_run, args=args) for args in args_list]
         for p in procs:
             p.start()
         for p in procs:
