@@ -11,6 +11,7 @@ import inspect
 import multiprocessing as mp
 import os
 import socket
+import time
 from typing import Union, Literal
 import textwrap
 
@@ -84,6 +85,7 @@ class DTest:
     start_method = "spawn"
     _force_gpu = False
     _force_cpu = False
+    _poll_sec = 1
 
     def __call__(self, request):
         self._current_test = self._get_current_test_func(request)
@@ -162,19 +164,30 @@ class DTest:
         args_list = [
             (rank, world_size, master_port, skip_q, ex_q) for rank in range(world_size)
         ]
-        procs = [
-            mp_context.Process(target=self._dist_run, args=args) for args in args_list
-        ]
-        for p in procs:
+        procs_dict = {
+            idx: mp_context.Process(target=self._dist_run, args=args)
+            for idx, args in enumerate(args_list)
+        }
+        for p in procs_dict.values():
             p.start()
-        for p in procs:
-            p.join()
-
-        if not skip_q.empty():
-            pytest.skip(skip_q.get())
-        if not ex_q.empty():
-            print(f"Found exception: {ex_q.get()}")
-            raise RuntimeError
+        while procs_dict:
+            if not skip_q.empty():
+                pytest.skip(skip_q.get())
+                for p in procs_dict.values():
+                    p.terminate()
+                return
+            if not ex_q.empty():
+                print(f"Found exception: {ex_q.get()}")
+                for p in procs_dict.values():
+                    p.terminate()
+                raise RuntimeError
+            keys_to_remove = []
+            for k, p in procs_dict.items():
+                if not p.is_alive():
+                    keys_to_remove.append(k)
+            for k in keys_to_remove:
+                del procs_dict[k]
+            time.sleep(self._poll_sec)
 
     def _dist_run(
         self,
