@@ -172,10 +172,9 @@ class DTest:
             p.start()
         while procs_dict:
             if not skip_q.empty():
-                pytest.skip(skip_q.get())
                 for p in procs_dict.values():
                     p.terminate()
-                return
+                pytest.skip(skip_q.get())
             if not ex_q.empty():
                 print(f"Found exception: {ex_q.get()}")
                 for p in procs_dict.values():
