@@ -12,6 +12,7 @@ import multiprocessing as mp
 import os
 import socket
 import time
+import traceback
 from typing import Union, Literal
 import textwrap
 
@@ -176,10 +177,11 @@ class DTest:
                     p.terminate()
                 pytest.skip(skip_q.get())
             if not ex_q.empty():
-                print(f"Found exception: {ex_q.get()}")
+                tb, e = ex_q.get()
+                print(tb)
                 for p in procs_dict.values():
                     p.terminate()
-                raise RuntimeError
+                raise e
             keys_to_remove = []
             for k, p in procs_dict.items():
                 if not p.is_alive():
@@ -221,7 +223,8 @@ class DTest:
             if isinstance(e, Skipped):
                 skip_q.put(e.msg)
             else:
-                ex_q.put(str(e))
+                tb = traceback.format_exc()
+                ex_q.put((tb, e))
                 raise e
         finally:
             dist.barrier()
