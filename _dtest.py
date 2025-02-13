@@ -93,12 +93,16 @@ class DTest:
             pytest.skip("only supported in accelerator environments.")
 
         # Process DTest specific marks: {world_size, gpu, cpu}
-        mark_dict = {mark.name: mark for mark in getattr(request.function, "pytestmark", [])}
+        mark_dict = {
+            mark.name: mark for mark in getattr(request.function, "pytestmark", [])
+        }
         # Catch world_size override pytest mark
         if "world_size" in mark_dict:
             world_sizes = mark_dict["world_size"].args[0]
         else:
-            world_sizes = self._fixture_kwargs.get("world_size", self.default_world_size)
+            world_sizes = self._fixture_kwargs.get(
+                "world_size", self.default_world_size
+            )
 
         # If world_size = "auto", try to read from CUDA_VISIBLE_DEVICES, otherwise default to 2
         if isinstance(world_sizes, str):
@@ -155,8 +159,12 @@ class DTest:
         # Run the test
         ex_q = mp_context.Queue()
         skip_q = mp_context.Queue()
-        args_list = [(rank, world_size, master_port, skip_q, ex_q) for rank in range(world_size)]
-        procs = [mp_context.Process(target=self._dist_run, args=args) for args in args_list]
+        args_list = [
+            (rank, world_size, master_port, skip_q, ex_q) for rank in range(world_size)
+        ]
+        procs = [
+            mp_context.Process(target=self._dist_run, args=args) for args in args_list
+        ]
         for p in procs:
             p.start()
         for p in procs:
@@ -204,6 +212,7 @@ class DTest:
                 ex_q.put(str(e))
                 raise e
         finally:
+            dist.barrier()
             dist.destroy_process_group()
 
     @property
