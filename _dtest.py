@@ -234,11 +234,13 @@ class DTest:
 
         if self.device_type == "cuda":
             torch.cuda.set_device(rank)
+        # For unknown reasons, setting some subset of {rank, world_size, and device_id}
+        # can cause dist.{send,receive} calls to fail, so we omit them.
         dist.init_process_group(
             backend=self.backend,
-            rank=rank,
-            world_size=world_size,
-            device_id=self.device if self.backend == "nccl" else None,
+            # rank=rank,
+            # world_size=world_size,
+            # device_id=self.device if self.backend == "nccl" else None,
             timeout=datetime.timedelta(seconds=self._init_timeout_sec),
         )
         dist.barrier()
