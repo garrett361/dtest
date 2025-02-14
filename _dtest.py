@@ -180,12 +180,20 @@ class DTest:
                 pytest.skip(skip_q.get())
 
             if not ex_q.empty():
-                rank, tb, e = ex_q.get()
-                print(f"TRACEBACK from Rank {rank}")
-                print(tb)
+                rank_tb_e_list = []
+                while not ex_q.empty():
+                    rank_tb_e_list.append(ex_q.get())
+                for rank, tb, e in rank_tb_e_list:
+                    print(
+                        f"TRACEBACK from Rank {rank}:",
+                        tb,
+                        f"EXCEPTION from Rank {rank}:",
+                        e,
+                    )
+
                 for p in procs_dict.values():
                     p.terminate()
-                raise e
+                raise RuntimeError("Subprocesses found above exceptions.")
 
             ranks_to_remove = []
             non_zero_exit_code_ranks = []
