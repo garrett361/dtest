@@ -88,7 +88,7 @@ class DTest:
     _force_gpu = False
     _force_cpu = False
     _poll_sec = 1
-    _init_timeout_sec = 60
+    _init_timeout_sec = 30
 
     def __call__(self, request):
         self._current_test = self._get_current_test_func(request)
