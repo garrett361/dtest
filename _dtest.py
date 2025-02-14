@@ -14,7 +14,7 @@ import os
 import socket
 import time
 import traceback
-from typing import Union, Literal
+from typing import Optional, Union, Literal
 import textwrap
 
 import pytest
@@ -89,6 +89,7 @@ class DTest:
     _force_cpu = False
     _poll_sec = 1
     _init_timeout_sec = 30
+    _seed: Optional[int] = 42
 
     def __call__(self, request):
         self._current_test = self._get_current_test_func(request)
@@ -236,6 +237,8 @@ class DTest:
             torch.cuda.set_device(rank)
         # For unknown reasons, setting some subset of {rank, world_size, and device_id}
         # can cause dist.{send,receive} calls to fail, so we omit them.
+        if self._seed is not None:
+            torch.manual_seed(self._seed)
         dist.init_process_group(
             backend=self.backend,
             # rank=rank,
@@ -257,6 +260,7 @@ class DTest:
         finally:
             dist.barrier()
             dist.destroy_process_group()
+            # tensor([ 3.7188, -0.2949,  0.1475, -2.3438,  0.5312,  6.3750, -2.6719,  2.6875],
 
     @property
     def rank(self) -> int:
