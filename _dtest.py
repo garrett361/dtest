@@ -7,6 +7,7 @@
 
 # DeepSpeed Team
 
+import datetime
 import inspect
 import multiprocessing as mp
 import os
@@ -167,8 +168,8 @@ class DTest:
             (rank, world_size, master_port, skip_q, ex_q) for rank in range(world_size)
         ]
         procs_dict = {
-            idx: mp_context.Process(target=self._dist_run, args=args)
-            for idx, args in enumerate(args_list)
+            rank: mp_context.Process(target=self._dist_run, args=args)
+            for rank, args in enumerate(args_list)
         }
         for p in procs_dict.values():
             p.start()
@@ -177,18 +178,33 @@ class DTest:
                 for p in procs_dict.values():
                     p.terminate()
                 pytest.skip(skip_q.get())
+
             if not ex_q.empty():
-                tb, e = ex_q.get()
+                rank, tb, e = ex_q.get()
+                print(f"TRACEBACK from Rank {rank}")
                 print(tb)
                 for p in procs_dict.values():
                     p.terminate()
                 raise e
-            keys_to_remove = []
-            for k, p in procs_dict.items():
+
+            ranks_to_remove = []
+            non_zero_exit_code_ranks = []
+            for rank, p in procs_dict.items():
                 if not p.is_alive():
-                    keys_to_remove.append(k)
-            for k in keys_to_remove:
-                del procs_dict[k]
+                    if p.exitcode != 0:
+                        non_zero_exit_code_ranks.append((rank, p.exitcode))
+                    ranks_to_remove.append(rank)
+            for rank in ranks_to_remove:
+                del procs_dict[rank]
+
+            if non_zero_exit_code_ranks:
+                for p in procs_dict.values():
+                    p.terminate()
+                raise RuntimeError(
+                    f"Found non-zero exit codes from these rank, exit code pairs: "
+                    f"{non_zero_exit_code_ranks}"
+                )
+
             time.sleep(self._poll_sec)
 
     def _dist_run(
@@ -226,7 +242,7 @@ class DTest:
                 skip_q.put(e.msg)
             else:
                 tb = traceback.format_exc()
-                ex_q.put((tb, e))
+                ex_q.put((rank, tb, e))
                 raise e
         finally:
             dist.barrier()
