@@ -260,7 +260,6 @@ class DTest:
         finally:
             dist.barrier()
             dist.destroy_process_group()
-            # tensor([ 3.7188, -0.2949,  0.1475, -2.3438,  0.5312,  6.3750, -2.6719,  2.6875],
 
     @property
     def rank(self) -> int:
