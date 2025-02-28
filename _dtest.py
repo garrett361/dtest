@@ -11,6 +11,7 @@ import datetime
 import inspect
 import multiprocessing as mp
 import os
+from random import randint
 import socket
 import time
 import traceback
@@ -24,18 +25,20 @@ from _pytest.fixtures import FixtureLookupError
 from _pytest.outcomes import Skipped
 
 
-def _get_master_port(base_port: int = 29500, port_range_size: int = 1000) -> str:
-    # Select first open port in range
-    port = base_port
+def _get_master_port(
+    base_port: int = 29500, port_range_size: int = 1000, max_tries: int = 10
+) -> str:
     max_port = base_port + port_range_size
     sock = socket.socket()
-    while port < max_port:
+    tries = 0
+    while tries < max_tries:
         try:
+            port = randint(base_port, max_port)
             sock.bind(("", port))
             sock.close()
             return str(port)
         except OSError:
-            port += 1
+            tries += 1
     raise IOError("no free ports")
 
 
