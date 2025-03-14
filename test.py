@@ -1,7 +1,8 @@
 import pytest
-from dtest import DTest
 import torch
 import torch.distributed as dist
+
+from dtest import DTest
 
 
 class TestDTest(DTest):

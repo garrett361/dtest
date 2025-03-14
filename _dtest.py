@@ -13,10 +13,11 @@ import multiprocessing as mp
 import os
 from random import randint
 import socket
+import tempfile
+import textwrap
 import time
 import traceback
-from typing import Optional, Union, Literal
-import textwrap
+from typing import Literal, Optional, Union
 
 import pytest
 import torch
@@ -168,8 +169,10 @@ class DTest:
         # Run the test
         ex_q = mp_context.Queue()
         skip_q = mp_context.Queue()
+        file_name = tempfile.NamedTemporaryFile(delete=False).name
         args_list = [
-            (rank, world_size, master_port, skip_q, ex_q) for rank in range(world_size)
+            (rank, world_size, master_port, skip_q, ex_q, file_name)
+            for rank in range(world_size)
         ]
         procs_dict = {
             rank: mp_context.Process(target=self._dist_run, args=args)
@@ -226,6 +229,7 @@ class DTest:
         master_port: str,
         skip_q: mp.Queue,
         ex_q: mp.Queue,
+        file_name: str,
     ):
         """Initialize deepspeed.comm and execute the user function."""
         os.environ["MASTER_ADDR"] = "127.0.0.1"
@@ -242,12 +246,14 @@ class DTest:
         # can cause dist.{send,receive} calls to fail, so we omit them.
         if self._seed is not None:
             torch.manual_seed(self._seed)
+        store = dist.FileStore(file_name, world_size)
         dist.init_process_group(
             backend=self.backend,
-            # rank=rank,
-            # world_size=world_size,
+            rank=rank,
+            world_size=world_size,
             # device_id=self.device if self.backend == "nccl" else None,
             timeout=datetime.timedelta(seconds=self._init_timeout_sec),
+            store=store,
         )
         dist.barrier()
 
