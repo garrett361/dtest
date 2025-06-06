@@ -11,12 +11,12 @@ import datetime
 import inspect
 import multiprocessing as mp
 import os
-from random import randint
 import socket
 import tempfile
 import textwrap
 import time
 import traceback
+from random import randint
 from typing import Literal, Optional, Union
 
 import pytest
@@ -259,13 +259,12 @@ class DTest:
 
         try:
             self._current_test(**self._fixture_kwargs)
-        except BaseException as e:
-            if isinstance(e, Skipped):
-                skip_q.put(e.msg)
-            else:
-                tb = traceback.format_exc()
-                ex_q.put((rank, tb, e))
-                raise e
+        except Skipped as e:
+            skip_q.put(e.msg)
+        except Exception as e:
+            tb = traceback.format_exc()
+            ex_q.put((rank, tb, e))
+            raise
         finally:
             dist.barrier()
             dist.destroy_process_group()
@@ -282,7 +281,7 @@ class DTest:
     def device_type(self) -> str:
         if self._force_gpu:
             return "cuda"
-        elif self._force_cpu or not self.requires_cuda_env:
+        if self._force_cpu or not self.requires_cuda_env:
             return "cpu"
         return "cuda" if torch.cuda.is_available() else "cpu"
 
