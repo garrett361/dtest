@@ -89,6 +89,7 @@ class DTest:
     default_world_size: Union[int, Literal["auto"]] = "auto"
     requires_cuda_env = True
     start_method = "spawn"
+    no_nccl_debug: bool = True
     _force_gpu = False
     _force_cpu = False
     _poll_sec = 1
@@ -239,7 +240,8 @@ class DTest:
         os.environ["WORLD_SIZE"] = str(world_size)
 
         # turn off NCCL logging if set
-        os.environ.pop("NCCL_DEBUG", None)
+        if self.no_nccl_debug:
+            os.environ.pop("NCCL_DEBUG", None)
 
         if self.device_type == "cuda":
             torch.cuda.set_device(rank)
