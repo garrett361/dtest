@@ -169,58 +169,59 @@ class DTest:
         # Run the test
         ex_q = mp_context.Queue()
         skip_q = mp_context.Queue()
-        file_name = tempfile.NamedTemporaryFile(delete=False).name
-        args_list = [
-            (rank, world_size, master_port, skip_q, ex_q, file_name)
-            for rank in range(world_size)
-        ]
-        procs_dict = {
-            rank: mp_context.Process(target=self._dist_run, args=args)
-            for rank, args in enumerate(args_list)
-        }
-        for p in procs_dict.values():
-            p.start()
-        while procs_dict:
-            if not skip_q.empty():
-                for p in procs_dict.values():
-                    p.terminate()
-                pytest.skip(skip_q.get())
+        with tempfile.NamedTemporaryFile(delete=False) as file:
+            file_name = file.name
+            args_list = [
+                (rank, world_size, master_port, skip_q, ex_q, file_name)
+                for rank in range(world_size)
+            ]
+            procs_dict = {
+                rank: mp_context.Process(target=self._dist_run, args=args)
+                for rank, args in enumerate(args_list)
+            }
+            for p in procs_dict.values():
+                p.start()
+            while procs_dict:
+                if not skip_q.empty():
+                    for p in procs_dict.values():
+                        p.terminate()
+                    pytest.skip(skip_q.get())
 
-            if not ex_q.empty():
-                rank_tb_e_list = []
-                while not ex_q.empty():
-                    rank_tb_e_list.append(ex_q.get())
-                for rank, tb, e in rank_tb_e_list:
-                    print(
-                        f"TRACEBACK from Rank {rank}:",
-                        tb,
-                        f"EXCEPTION from Rank {rank}:",
-                        e,
+                if not ex_q.empty():
+                    rank_tb_e_list = []
+                    while not ex_q.empty():
+                        rank_tb_e_list.append(ex_q.get())
+                    for rank, tb, e in rank_tb_e_list:
+                        print(
+                            f"TRACEBACK from Rank {rank}:",
+                            tb,
+                            f"EXCEPTION from Rank {rank}:",
+                            e,
+                        )
+
+                    for p in procs_dict.values():
+                        p.terminate()
+                    raise RuntimeError("Subprocesses found above exceptions.")
+
+                ranks_to_remove = []
+                non_zero_exit_code_ranks = []
+                for rank, p in procs_dict.items():
+                    if not p.is_alive():
+                        if p.exitcode != 0:
+                            non_zero_exit_code_ranks.append((rank, p.exitcode))
+                        ranks_to_remove.append(rank)
+                for rank in ranks_to_remove:
+                    del procs_dict[rank]
+
+                if non_zero_exit_code_ranks:
+                    for p in procs_dict.values():
+                        p.terminate()
+                    raise RuntimeError(
+                        f"Found non-zero exit codes from these rank, exit code pairs: "
+                        f"{non_zero_exit_code_ranks}"
                     )
 
-                for p in procs_dict.values():
-                    p.terminate()
-                raise RuntimeError("Subprocesses found above exceptions.")
-
-            ranks_to_remove = []
-            non_zero_exit_code_ranks = []
-            for rank, p in procs_dict.items():
-                if not p.is_alive():
-                    if p.exitcode != 0:
-                        non_zero_exit_code_ranks.append((rank, p.exitcode))
-                    ranks_to_remove.append(rank)
-            for rank in ranks_to_remove:
-                del procs_dict[rank]
-
-            if non_zero_exit_code_ranks:
-                for p in procs_dict.values():
-                    p.terminate()
-                raise RuntimeError(
-                    f"Found non-zero exit codes from these rank, exit code pairs: "
-                    f"{non_zero_exit_code_ranks}"
-                )
-
-            time.sleep(self._poll_sec)
+                time.sleep(self._poll_sec)
 
     def _dist_run(
         self,
