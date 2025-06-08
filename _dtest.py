@@ -17,13 +17,29 @@ import textwrap
 import time
 import traceback
 from random import randint
-from typing import Literal, Optional, Union
+from typing import Any, Callable, Literal, Optional, Union
 
 import pytest
 import torch
 import torch.distributed as dist
 from _pytest.fixtures import FixtureLookupError
 from _pytest.outcomes import Skipped
+from torch.distributed.elastic.multiprocessing.api import (
+    DefaultLogsSpecs,
+    MultiprocessContext,
+)
+from torch.distributed.elastic.multiprocessing.errors import record
+
+
+def _print_dict_flattened(d, prefix: str = "") -> None:
+    if not isinstance(d, dict):
+        return
+    for k, v in d.items():
+        if isinstance(v, dict):
+            _print_dict_flattened(v, k if not prefix else prefix + f".{k}")
+        else:
+            printed_prefix = (k if not prefix else prefix + f".{k}").upper() + ": "
+            print(printed_prefix, v)
 
 
 def _get_master_port(
@@ -41,6 +57,12 @@ def _get_master_port(
         except OSError:
             tries += 1
     raise IOError("no free ports")
+
+
+class DTestFailedError(Exception):
+    def __init__(self, message="DTest Failed"):
+        self.message = message
+        super().__init__(self.message)
 
 
 class DTest:
@@ -97,8 +119,8 @@ class DTest:
     _seed: Optional[int] = 42
 
     def __call__(self, request):
-        self._current_test = self._get_current_test_func(request)
-        self._fixture_kwargs = self._get_fixture_kwargs(request, self._current_test)
+        test = self._get_current_test_func(request)
+        test_kwargs = self._get_fixture_kwargs(request, test)
 
         if self.requires_cuda_env and not torch.cuda.is_available():
             pytest.skip("only supported in accelerator environments.")
@@ -111,9 +133,7 @@ class DTest:
         if "world_size" in mark_dict:
             world_sizes = mark_dict["world_size"].args[0]
         else:
-            world_sizes = self._fixture_kwargs.get(
-                "world_size", self.default_world_size
-            )
+            world_sizes = test_kwargs.get("world_size", self.default_world_size)
 
         # If world_size = "auto", try to read from CUDA_VISIBLE_DEVICES, otherwise default to 2
         if isinstance(world_sizes, str):
@@ -133,7 +153,7 @@ class DTest:
 
         try:
             for ws in world_sizes:
-                self._launch_procs(ws)
+                self.run(test, test_kwargs, ws)
         finally:
             self._force_gpu = False
             self._force_cpu = False
@@ -157,7 +177,9 @@ class DTest:
                 pass  # test methods can have kwargs that are not fixtures
         return fixture_kwargs
 
-    def _launch_procs(self, world_size):
+    def run(
+        self, test: Callable[..., None], test_kwargs: dict[Any, Any], world_size: int
+    ):
         # Verify we have enough accelerator devices to run this test
         if self.device_type != "cpu" and self.num_gpus() < world_size:
             pytest.skip(
@@ -168,83 +190,76 @@ class DTest:
         master_port = _get_master_port()
 
         # Run the test
-        ex_q = mp_context.Queue()
         skip_q = mp_context.Queue()
         with tempfile.NamedTemporaryFile(delete=False) as file:
             file_name = file.name
-            args_list = [
-                (rank, world_size, master_port, skip_q, ex_q, file_name)
-                for rank in range(world_size)
-            ]
-            procs_dict = {
-                rank: mp_context.Process(target=self._dist_run, args=args)
-                for rank, args in enumerate(args_list)
+            args = {
+                r: (test, test_kwargs, skip_q, file_name) for r in range(world_size)
             }
-            for p in procs_dict.values():
-                p.start()
-            while procs_dict:
-                if not skip_q.empty():
-                    for p in procs_dict.values():
-                        p.terminate()
-                    pytest.skip(skip_q.get())
+            master_port = _get_master_port()
+            envs = {}
+            for local_rank in range(world_size):
+                worker_env = {
+                    "LOCAL_RANK": str(local_rank),
+                    "RANK": str(local_rank),
+                    "WORLD_SIZE": str(world_size),
+                    "MASTER_ADDR": "127.0.0.1",
+                    "MASTER_PORT": str(master_port),
+                    "TORCHELASTIC_ERROR_FILE": f"/tmp/err/{local_rank}",
+                }
+                envs[local_rank] = worker_env
+            log_line_prefixes = {r: f"[rank {r}]" for r in range(world_size)}
 
-                if not ex_q.empty():
-                    rank_tb_e_list = []
-                    while not ex_q.empty():
-                        rank_tb_e_list.append(ex_q.get())
-                    for rank, tb, e in rank_tb_e_list:
-                        print(
-                            f"TRACEBACK from Rank {rank}:",
-                            tb,
-                            f"EXCEPTION from Rank {rank}:",
-                            e,
-                        )
+            context = MultiprocessContext(
+                name="dtest",
+                entrypoint=self._dist_run,
+                args=args,
+                envs=envs,
+                start_method=self.start_method,
+                logs_specs=DefaultLogsSpecs(),
+                log_line_prefixes=log_line_prefixes,
+            )
+            try:
+                context.start()
+                while True:
+                    if not skip_q.empty():
+                        # TODO: @goon -  KILL PROCS
+                        pytest.skip(skip_q.get())
 
-                    for p in procs_dict.values():
-                        p.terminate()
-                    raise RuntimeError("Subprocesses found above exceptions.")
+                    result = context.wait(0)
+                    if result:
+                        if result.is_failed():
+                            for local_rank, proc_failure in result.failures.items():
+                                print(
+                                    f"FAILURE on {local_rank=}:\n",
+                                )
+                                print(f"{proc_failure=}")
+                                _print_dict_flattened(proc_failure.message)
+                            raise DTestFailedError("FAILED")
+                        return
+                    time.sleep(self._poll_sec)
 
-                ranks_to_remove = []
-                non_zero_exit_code_ranks = []
-                for rank, p in procs_dict.items():
-                    if not p.is_alive():
-                        if p.exitcode != 0:
-                            non_zero_exit_code_ranks.append((rank, p.exitcode))
-                        ranks_to_remove.append(rank)
-                for rank in ranks_to_remove:
-                    del procs_dict[rank]
+            except Exception:
+                context.close()
+                raise
 
-                if non_zero_exit_code_ranks:
-                    for p in procs_dict.values():
-                        p.terminate()
-                    raise RuntimeError(
-                        f"Found non-zero exit codes from these rank, exit code pairs: "
-                        f"{non_zero_exit_code_ranks}"
-                    )
-
-                time.sleep(self._poll_sec)
-
+    @record
     def _dist_run(
         self,
-        rank: int,
-        world_size: int,
-        master_port: str,
+        test: Callable[..., None],
+        test_kwargs: dict[Any, Any],
         skip_q: mp.Queue,
-        ex_q: mp.Queue,
         file_name: str,
     ):
-        """Initialize deepspeed.comm and execute the user function."""
-        os.environ["MASTER_ADDR"] = "127.0.0.1"
-        os.environ["MASTER_PORT"] = str(master_port)
-        os.environ["RANK"] = os.environ["LOCAL_RANK"] = str(rank)
-        os.environ["WORLD_SIZE"] = str(world_size)
+        rank = local_rank = int(os.environ["RANK"])
+        world_size = int(os.environ["WORLD_SIZE"])
 
         # turn off NCCL logging if set
         if self.no_nccl_debug:
             os.environ.pop("NCCL_DEBUG", None)
 
         if self.device_type == "cuda":
-            torch.cuda.set_device(rank)
+            torch.cuda.set_device(local_rank)
         # For unknown reasons, setting some subset of {rank, world_size, and device_id}
         # can cause dist.{send,receive} calls to fail, so we omit them.
         if self._seed is not None:
@@ -261,12 +276,11 @@ class DTest:
         dist.barrier()
 
         try:
-            self._current_test(**self._fixture_kwargs)
+            test(**test_kwargs)
         except Skipped as e:
             skip_q.put(e.msg)
-        except Exception as e:
+        except Exception:
             tb = traceback.format_exc()
-            ex_q.put((rank, tb, e))
             raise
         finally:
             dist.barrier()
