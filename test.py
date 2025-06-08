@@ -5,6 +5,11 @@ import torch.distributed as dist
 from dtest import DTest
 
 
+def fn_for_traceback_testing():
+    print("I should fail")
+    assert False, "asserting False"
+
+
 class TestDTest(DTest):
     requires_cuda_env = False
 
@@ -20,8 +25,7 @@ class TestDTest(DTest):
         pytest.skip("I should be skipped")
 
     def test_fail(self) -> None:
-        self.print_rank0_only("I should fail")
-        assert False
+        fn_for_traceback_testing()
 
     @pytest.mark.world_size([2, 3, 4])
     def test_world_sizes(self) -> None:
