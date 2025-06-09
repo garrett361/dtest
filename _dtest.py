@@ -9,19 +9,19 @@
 
 import datetime
 import inspect
-import multiprocessing as mp
 import os
 import socket
 import tempfile
 import textwrap
 import time
-import traceback
+from contextlib import contextmanager
 from random import randint
 from typing import Any, Callable, Literal, Optional, Union
 
 import pytest
 import torch
 import torch.distributed as dist
+import torch.multiprocessing as mp
 from _pytest.fixtures import FixtureLookupError
 from _pytest.outcomes import Skipped
 from torch.distributed.elastic.multiprocessing.api import (
@@ -109,13 +109,13 @@ class DTest:
     """
 
     default_world_size: Union[int, Literal["auto"]] = "auto"
-    requires_cuda_env = True
-    start_method = "spawn"
+    requires_cuda_env: bool = True
+    start_method: str = "spawn"
     no_nccl_debug: bool = True
-    _force_gpu = False
-    _force_cpu = False
-    _poll_sec = 1
-    _init_timeout_sec = 30
+    _force_gpu: bool = False
+    _force_cpu: bool = False
+    _poll_sec: int = 1
+    _init_timeout_sec: int = 30
     _seed: Optional[int] = 42
 
     def __call__(self, request):
@@ -191,12 +191,11 @@ class DTest:
 
         # Run the test
         skip_q = mp_context.Queue()
-        with tempfile.NamedTemporaryFile(delete=False) as file:
+        with tempfile.NamedTemporaryFile() as file:
             file_name = file.name
             args = {
                 r: (test, test_kwargs, skip_q, file_name) for r in range(world_size)
             }
-            master_port = _get_master_port()
             envs = {}
             for local_rank in range(world_size):
                 worker_env = {
@@ -204,12 +203,10 @@ class DTest:
                     "RANK": str(local_rank),
                     "WORLD_SIZE": str(world_size),
                     "MASTER_ADDR": "127.0.0.1",
-                    "MASTER_PORT": str(master_port),
-                    "TORCHELASTIC_ERROR_FILE": f"/tmp/err/{local_rank}",
+                    "MASTER_PORT": master_port,
                 }
                 envs[local_rank] = worker_env
             log_line_prefixes = {r: f"[rank {r}]" for r in range(world_size)}
-
             context = MultiprocessContext(
                 name="dtest",
                 entrypoint=self._dist_run,
@@ -224,6 +221,7 @@ class DTest:
                 while True:
                     if not skip_q.empty():
                         # TODO: @goon -  KILL PROCS
+                        context.close()
                         pytest.skip(skip_q.get())
 
                     result = context.wait(0)
@@ -235,7 +233,7 @@ class DTest:
                                 )
                                 print(f"{proc_failure=}")
                                 _print_dict_flattened(proc_failure.message)
-                            raise DTestFailedError("FAILED")
+                            raise DTestFailedError()
                         return
                     time.sleep(self._poll_sec)
 
@@ -243,6 +241,8 @@ class DTest:
                 context.close()
                 raise
 
+    # NOTE: @goon - important to have this record here to successfully capture some types of NCCL
+    # errors, it seems.
     @record
     def _dist_run(
         self,
@@ -279,11 +279,9 @@ class DTest:
             test(**test_kwargs)
         except Skipped as e:
             skip_q.put(e.msg)
-        except Exception:
-            tb = traceback.format_exc()
-            raise
         finally:
-            dist.barrier()
+            # NOTE: @goon - Previously had a `dist.barrier` call here to sync procs, and this was a
+            # BAD idea for the reasons explained in [Barrier and finally].
             dist.destroy_process_group()
 
     @property
@@ -334,3 +332,29 @@ class DTest:
                 *args,
                 **kwargs,
             )
+
+    @contextmanager
+    def temp_dir(self):
+        """
+        Create a shared temp dir for writing to.
+        """
+        if not self.rank:
+            temp_dir = tempfile.TemporaryDirectory()
+            temp_dir_name = temp_dir.name
+        else:
+            temp_dir_name = None
+        temp_dir_name_list = [temp_dir_name]
+        dist.broadcast_object_list(temp_dir_name_list, src=0)
+        try:
+            yield temp_dir_name_list[0]
+        finally:
+            # [Barrier and finally]
+            # NOTE: @goon - it is tempting to put a dist.barrier() here to ensure all procs have
+            # finished before removing the dtemp dir, but AVOID doing this.
+            #
+            # Because the barrier would be called within a `finally`, python will attempt the
+            # barrier regardless of any exceptions raised within the ctx manager. This will in turn
+            # raise a NCCL error which can swallow the actual error which occurred in the ctx
+            # manager and make debugging vastly more confusing.  Call `dist.barrier` within the ctx
+            # manager scope itself if such sync points are needed.
+            pass
