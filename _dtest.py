@@ -33,13 +33,14 @@ from torch.distributed.elastic.multiprocessing.errors import record
 
 def _print_dict_flattened(d, prefix: str = "") -> None:
     if not isinstance(d, dict):
+        print(d)
         return
     for k, v in d.items():
         if isinstance(v, dict):
             _print_dict_flattened(v, k if not prefix else prefix + f".{k}")
         else:
             printed_prefix = (k if not prefix else prefix + f".{k}").upper() + ": "
-            print(printed_prefix, v)
+            print(printed_prefix, v, "\n")
 
 
 def _get_master_port(
@@ -231,9 +232,8 @@ class DTest:
                                 print(
                                     f"FAILURE on {local_rank=}:\n",
                                 )
-                                print(f"{proc_failure=}")
                                 _print_dict_flattened(proc_failure.message)
-                            raise DTestFailedError()
+                            raise DTestFailedError(proc_failure.message["message"])
                         return
                     time.sleep(self._poll_sec)
 
