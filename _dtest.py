@@ -345,16 +345,5 @@ class DTest:
             temp_dir_name = None
         temp_dir_name_list = [temp_dir_name]
         dist.broadcast_object_list(temp_dir_name_list, src=0)
-        try:
-            yield temp_dir_name_list[0]
-        finally:
-            # [Barrier and finally]
-            # NOTE: @goon - it is tempting to put a dist.barrier() here to ensure all procs have
-            # finished before removing the dtemp dir, but AVOID doing this.
-            #
-            # Because the barrier would be called within a `finally`, python will attempt the
-            # barrier regardless of any exceptions raised within the ctx manager. This will in turn
-            # raise a NCCL error which can swallow the actual error which occurred in the ctx
-            # manager and make debugging vastly more confusing.  Call `dist.barrier` within the ctx
-            # manager scope itself if such sync points are needed.
-            pass
+        yield temp_dir_name_list[0]
+        dist.barrier()
