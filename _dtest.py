@@ -192,7 +192,7 @@ class DTest:
 
         # Run the test
         skip_q = mp_context.Queue()
-        with tempfile.NamedTemporaryFile() as file:
+        with tempfile.NamedTemporaryFile(delete=False) as file:
             file_name = file.name
             args = {
                 r: (test, test_kwargs, skip_q, file_name) for r in range(world_size)
