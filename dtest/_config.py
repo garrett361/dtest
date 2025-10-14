@@ -7,14 +7,12 @@
 
 # DeepSpeed Team
 
-# tests directory-specific settings - this file is run automatically by pytest before any tests are run
 
 import pytest
+
 from dtest import DTest
 
 
-# Override of pytest "runtest" for DistributedTest class
-# This hook is run before the default pytest_runtest_call
 @pytest.hookimpl(tryfirst=True)
 def pytest_runtest_call(item):
     # We want to use our own launching function for distributed tests
