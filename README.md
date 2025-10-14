@@ -1,6 +1,7 @@
 # Distributed Pytest Utils
 
-Shamelessly stolen from/inspired by DeepSpeed, then simplified.
+`pytest` plugin for distributed `torch` tests. Shamelessly stolen from/inspired by DeepSpeed, then
+simplified.
 
 ```
 uv pip install git+https://github.com/garrett361/dtest

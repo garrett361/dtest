@@ -281,7 +281,9 @@ class DTest:
             skip_q.put(e.msg)
         finally:
             # NOTE: @goon - Previously had a `dist.barrier` call here to sync procs, and this was a
-            # BAD idea for the reasons explained in [Barrier and finally].
+            # BAD idea, since the barrier is **always** called in this pattern. When a test would
+            # fail, the resulting stack trace would then be from the failed barrier call, rather
+            # than from the actual underlying failure.
             dist.destroy_process_group()
 
     @property

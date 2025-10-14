@@ -23,6 +23,6 @@ def pytest_runtest_call(item):
 
 
 def pytest_configure(config):
-    config.addinivalue_line("markers", "world_size(s)")
-    config.addinivalue_line("markers", "cpu")
-    config.addinivalue_line("markers", "gpu")
+    config.addinivalue_line("markers", "world_size: set the world size(s) the test will run with")
+    config.addinivalue_line("markers", "cpu: force cpu")
+    config.addinivalue_line("markers", "gpu: force gpu")
