@@ -3,7 +3,7 @@
 Shamelessly stolen from/inspired by DeepSpeed, then simplified.
 
 ```
-pip install pip@git+https://github.com/garrett361/dtest
+uv pip install git+https://github.com/garrett361/dtest
 ```
 
 Minimal example:
