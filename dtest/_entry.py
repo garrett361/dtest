@@ -43,4 +43,6 @@ def pytest_generate_tests(metafunc):
             world_sizes = [world_sizes]
 
         # Parametrize the test with world_size values
-        metafunc.parametrize("world_size", world_sizes)
+        metafunc.parametrize(
+            "world_size", world_sizes, ids=[f"world_size={ws}" for ws in world_sizes]
+        )
