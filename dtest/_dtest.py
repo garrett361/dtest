@@ -131,19 +131,21 @@ class DTest:
             mark.name: mark for mark in getattr(request.function, "pytestmark", [])
         }
         # Catch world_size override pytest mark
-        if "world_size" in mark_dict:
-            world_sizes = mark_dict["world_size"].args[0]
+        if (
+            hasattr(request.node, "callspec")
+            and "world_size" in request.node.callspec.params
+        ):
+            world_size = request.node.callspec.params["world_size"]
+        elif "world_size" in mark_dict:
+            world_size = mark_dict["world_size"].args[0]
         else:
-            world_sizes = test_kwargs.get("world_size", self.default_world_size)
+            world_size = test_kwargs.get("world_size", self.default_world_size)
 
         # If world_size = "auto", try to read from CUDA_VISIBLE_DEVICES, otherwise default to 2
-        if isinstance(world_sizes, str):
-            if world_sizes != "auto":
+        if isinstance(world_size, str):
+            if world_size != "auto":
                 raise ValueError("The only valid string for world_size is 'auto'")
-            world_sizes = self.num_gpus() or 2
-
-        if isinstance(world_sizes, int):
-            world_sizes = [world_sizes]
+            world_size = self.num_gpus() or 2
 
         if "cpu" in mark_dict and "gpu" in mark_dict:
             raise ValueError("Only one of 'cpu' or 'gpu' may be marked")
@@ -153,8 +155,7 @@ class DTest:
             self._force_gpu = True
 
         try:
-            for ws in world_sizes:
-                self.run(test, test_kwargs, ws)
+            self.run(test, test_kwargs, world_size)
         finally:
             self._force_gpu = False
             self._force_cpu = False

@@ -27,8 +27,15 @@ class TestDTest(DTest):
     def test_fail(self) -> None:
         fn_for_traceback_testing()
 
+    def test_default_world_size(self) -> None:
+        self.print_rank0_only(f"{self.world_size=}")
+
+    @pytest.mark.world_size(5)
+    def test_non_default_world_size(self, world_size: int) -> None:
+        self.print_rank0_only(f"{self.world_size=}")
+
     @pytest.mark.world_size([2, 3, 4])
-    def test_world_sizes(self) -> None:
+    def test_multiple_world_sizes(self, world_size: int) -> None:
         self.print_rank0_only(f"{self.world_size=}")
 
     @pytest.mark.parametrize("n", (2, 3, 4))
