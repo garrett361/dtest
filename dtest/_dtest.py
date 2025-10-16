@@ -10,13 +10,14 @@
 import datetime
 import inspect
 import os
+import pathlib
 import socket
 import tempfile
 import textwrap
 import time
 from contextlib import contextmanager
 from random import randint
-from typing import Any, Callable, Literal, Optional, Union
+from typing import Any, Callable, Generator, Literal, Optional, Union
 
 import pytest
 import torch
@@ -110,7 +111,6 @@ class DTest:
     """
 
     default_world_size: Union[int, Literal["auto"]] = "auto"
-    requires_cuda_env: bool = True
     start_method: str = "spawn"
     no_nccl_debug: bool = True
     _force_gpu: bool = False
@@ -122,9 +122,6 @@ class DTest:
     def __call__(self, request):
         test = self._get_current_test_func(request)
         test_kwargs = self._get_fixture_kwargs(request, test)
-
-        if self.requires_cuda_env and not torch.cuda.is_available():
-            pytest.skip("only supported in accelerator environments.")
 
         # Process DTest specific marks: {world_size, gpu, cpu}
         mark_dict = {
@@ -183,9 +180,15 @@ class DTest:
         self, test: Callable[..., None], test_kwargs: dict[Any, Any], world_size: int
     ):
         # Verify we have enough accelerator devices to run this test
-        if self.device_type != "cpu" and self.num_gpus() < world_size:
+        if self._force_gpu and self.device_type == "cpu":
+
             pytest.skip(
-                f"Skipping test because not enough GPUs are available: {world_size} required, {self.num_gpus()} available"
+                f"{self.__class__.__name__}:{test.__name__} requires GPUs, but none available."
+            )
+        if self.device_type == "gpu" and self.num_gpus() < world_size:
+            pytest.skip(
+                f"Insufficient GPUs available for {self.__class__.__name__}:{test.__name__}:"
+                f" {world_size} required, {self.num_gpus()} available."
             )
 
         mp_context = mp.get_context(self.start_method)
@@ -297,11 +300,9 @@ class DTest:
 
     @property
     def device_type(self) -> str:
-        if self._force_gpu:
-            return "cuda"
-        if self._force_cpu or not self.requires_cuda_env:
+        if not torch.cuda.is_available() or self._force_cpu:
             return "cpu"
-        return "cuda" if torch.cuda.is_available() else "cpu"
+        return "cuda"
 
     @property
     def device(self) -> torch.device:
@@ -309,17 +310,14 @@ class DTest:
 
     @property
     def backend(self) -> str:
-        if self._force_gpu:
-            return "nccl"
-        elif self._force_cpu or not self.requires_cuda_env:
+        if not torch.cuda.is_available() or self._force_cpu:
             return "gloo"
-
-        return "nccl" if torch.cuda.is_available() else "gloo"
+        return "nccl"
 
     def num_gpus(self) -> int:
         if self.device_type != "cuda":
             return 0
-        return len(os.environ["CUDA_VISIBLE_DEVICES"].split(","))
+        return torch.cuda.device_count()
 
     def print_rank(self, s, *args, **kwargs):
         print(
@@ -337,7 +335,7 @@ class DTest:
             )
 
     @contextmanager
-    def temp_dir(self):
+    def temp_dir(self) -> Generator[pathlib.Path, None, None]:
         """
         Create a shared temp dir for writing to.
         """
@@ -348,5 +346,5 @@ class DTest:
             temp_dir_name = None
         temp_dir_name_list = [temp_dir_name]
         dist.broadcast_object_list(temp_dir_name_list, src=0)
-        yield temp_dir_name_list[0]
+        yield pathlib.Path(temp_dir_name_list[0])
         dist.barrier()

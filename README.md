@@ -25,8 +25,9 @@ class TestDTest(DTest):
         self.print_rank(f"{t=}")
 ```
 
-Uses all available GPUs by default, or if on CPU defaults to `world_size=2`. The world size can also
-be configured by using the `world_size` mark _and_ specifying a `world_size` arg:
+Uses all available GPUs by default, or if on CPU defaults to `world_size=2`, unless the class
+attribute `default_world_size` is edited. The world size can also be configured by using the
+`world_size` mark _and_ specifying a `world_size` arg:
 
 ```python
 class TestWorldSizes(DTest):
@@ -41,3 +42,4 @@ class TestWorldSizes(DTest):
     def test_multiple_world_sizes(self, world_size: int) -> None:
         self.print_rank0_only(f"{self.world_size=}")
 ```
+See `test.py` for more cases, which also serves as the best documentation.
