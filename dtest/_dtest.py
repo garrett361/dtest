@@ -181,7 +181,6 @@ class DTest:
     ):
         # Verify we have enough accelerator devices to run this test
         if self._force_gpu and self.device_type == "cpu":
-
             pytest.skip(
                 f"{self.__class__.__name__}:{test.__name__} requires GPUs, but none available."
             )
@@ -237,6 +236,8 @@ class DTest:
                                     f"FAILURE on {local_rank=}:\n",
                                 )
                                 _print_dict_flattened(proc_failure.message)
+                            if isinstance(proc_failure.message, str):
+                                raise DTestFailedError(proc_failure.message)
                             raise DTestFailedError(proc_failure.message["message"])
                         return
                     time.sleep(self._poll_sec)
