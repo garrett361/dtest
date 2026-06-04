@@ -11,6 +11,7 @@ import datetime
 import inspect
 import os
 import pathlib
+import signal
 import socket
 import tempfile
 import textwrap
@@ -28,6 +29,7 @@ from _pytest.outcomes import Skipped
 from torch.distributed.elastic.multiprocessing.api import (
     DefaultLogsSpecs,
     MultiprocessContext,
+    SignalException,
 )
 from torch.distributed.elastic.multiprocessing.errors import record
 
@@ -221,6 +223,12 @@ class DTest:
                     result = context.wait(0)
                     if result:
                         if result.is_failed():
+                            if any(
+                                pf.exitcode == -signal.SIGINT
+                                for pf in result.failures.values()
+                            ):
+                                context.close()
+                                raise KeyboardInterrupt
                             messages = []
                             for local_rank, proc_failure in result.failures.items():
                                 messages.append(
@@ -230,7 +238,10 @@ class DTest:
                         return
                     time.sleep(self._poll_sec)
 
-            except Exception:
+            except SignalException:
+                context.close()
+                raise KeyboardInterrupt
+            except BaseException:
                 context.close()
                 raise
 
