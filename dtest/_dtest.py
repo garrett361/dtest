@@ -57,7 +57,9 @@ def _get_master_port(
             return str(port)
         except OSError:
             tries += 1
-    raise IOError("no free ports")
+    raise IOError(
+        f"No free ports in range [{base_port}, {max_port}] after {max_tries} attempts"
+    )
 
 
 class DTest:
@@ -134,11 +136,15 @@ class DTest:
         # If world_size = "auto", try to read from CUDA_VISIBLE_DEVICES, otherwise default to 2
         if isinstance(world_size, str):
             if world_size != "auto":
-                raise ValueError("The only valid string for world_size is 'auto'")
+                raise ValueError(
+                    f"{self.__class__.__name__}:{test.__name__}: world_size must be int or 'auto', got {world_size!r}"
+                )
             world_size = self.num_gpus() or 2
 
         if "cpu" in mark_dict and "gpu" in mark_dict:
-            raise ValueError("Only one of 'cpu' or 'gpu' may be marked")
+            raise ValueError(
+                f"{self.__class__.__name__}:{test.__name__}: only one of 'cpu' or 'gpu' may be marked"
+            )
         if "cpu" in mark_dict:
             self._force_cpu = True
         if "gpu" in mark_dict:
@@ -177,7 +183,7 @@ class DTest:
             pytest.skip(
                 f"{self.__class__.__name__}:{test.__name__} requires GPUs, but none available."
             )
-        if self.device_type == "gpu" and self.num_gpus() < world_size:
+        if self.device_type == "cuda" and self.num_gpus() < world_size:
             pytest.skip(
                 f"Insufficient GPUs available for {self.__class__.__name__}:{test.__name__}:"
                 f" {world_size} required, {self.num_gpus()} available."
