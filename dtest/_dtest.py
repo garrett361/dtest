@@ -32,16 +32,15 @@ from torch.distributed.elastic.multiprocessing.api import (
 from torch.distributed.elastic.multiprocessing.errors import record
 
 
-def _print_dict_flattened(d, prefix: str = "") -> None:
-    if not isinstance(d, dict):
-        print(d)
-        return
-    for k, v in d.items():
-        if isinstance(v, dict):
-            _print_dict_flattened(v, k if not prefix else prefix + f".{k}")
-        else:
-            printed_prefix = (k if not prefix else prefix + f".{k}").upper() + ": "
-            print(printed_prefix, v, "\n")
+def _format_failure(local_rank: int, message: Union[str, dict]) -> str:
+    if isinstance(message, str):
+        body = message
+    else:
+        body = message.get("extraInfo", {}).get("py_callstack", "") or message.get(
+            "message", "unknown error"
+        )
+    prefix = f"[rank {local_rank}] "
+    return textwrap.indent(body, prefix)
 
 
 def _get_master_port(
@@ -59,12 +58,6 @@ def _get_master_port(
         except OSError:
             tries += 1
     raise IOError("no free ports")
-
-
-class DTestFailedError(Exception):
-    def __init__(self, message="DTest Failed"):
-        self.message = message
-        super().__init__(self.message)
 
 
 class DTest:
@@ -231,14 +224,12 @@ class DTest:
                     result = context.wait(0)
                     if result:
                         if result.is_failed():
+                            messages = []
                             for local_rank, proc_failure in result.failures.items():
-                                print(
-                                    f"FAILURE on {local_rank=}:\n",
+                                messages.append(
+                                    _format_failure(local_rank, proc_failure.message)
                                 )
-                                _print_dict_flattened(proc_failure.message)
-                            if isinstance(proc_failure.message, str):
-                                raise DTestFailedError(proc_failure.message)
-                            raise DTestFailedError(proc_failure.message["message"])
+                            pytest.fail("\n".join(messages), pytrace=False)
                         return
                     time.sleep(self._poll_sec)
 
