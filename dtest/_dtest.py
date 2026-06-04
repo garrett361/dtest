@@ -108,8 +108,6 @@ class DTest:
     default_world_size: Union[int, Literal["auto"]] = "auto"
     start_method: str = "spawn"
     no_nccl_debug: bool = True
-    _force_gpu: bool = False
-    _force_cpu: bool = False
     _poll_sec: int = 1
     _init_timeout_sec: int = 30
     _seed: Optional[int] = 42
@@ -118,11 +116,18 @@ class DTest:
         test = self._get_current_test_func(request)
         test_kwargs = self._get_fixture_kwargs(request, test)
 
-        # Process DTest specific marks: {world_size, gpu, cpu}
         mark_dict = {
             mark.name: mark for mark in getattr(request.function, "pytestmark", [])
         }
-        # Catch world_size override pytest mark
+
+        if "cpu" in mark_dict and "gpu" in mark_dict:
+            raise ValueError(
+                f"{self.__class__.__name__}:{test.__name__}: only one of 'cpu' or 'gpu' may be marked"
+            )
+        self._force_cpu = "cpu" in mark_dict
+        self._force_gpu = "gpu" in mark_dict
+
+        # Resolve world_size (after device marks so num_gpus() respects _force_cpu)
         if (
             hasattr(request.node, "callspec")
             and "world_size" in request.node.callspec.params
@@ -133,7 +138,6 @@ class DTest:
         else:
             world_size = test_kwargs.get("world_size", self.default_world_size)
 
-        # If world_size = "auto", try to read from CUDA_VISIBLE_DEVICES, otherwise default to 2
         if isinstance(world_size, str):
             if world_size != "auto":
                 raise ValueError(
@@ -141,20 +145,7 @@ class DTest:
                 )
             world_size = self.num_gpus() or 2
 
-        if "cpu" in mark_dict and "gpu" in mark_dict:
-            raise ValueError(
-                f"{self.__class__.__name__}:{test.__name__}: only one of 'cpu' or 'gpu' may be marked"
-            )
-        if "cpu" in mark_dict:
-            self._force_cpu = True
-        if "gpu" in mark_dict:
-            self._force_gpu = True
-
-        try:
-            self.run(test, test_kwargs, world_size)
-        finally:
-            self._force_gpu = False
-            self._force_cpu = False
+        self.run(test, test_kwargs, world_size)
 
     def _get_current_test_func(self, request):
         # DistributedTest subclasses may have multiple test methods
