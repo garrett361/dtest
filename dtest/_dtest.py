@@ -329,11 +329,16 @@ class DTest:
         Create a shared temp dir for writing to.
         """
         if not self.rank:
-            temp_dir = tempfile.TemporaryDirectory()
-            temp_dir_name = temp_dir.name
+            td = tempfile.TemporaryDirectory()
+            temp_dir_name = td.name
         else:
+            td = None
             temp_dir_name = None
         temp_dir_name_list = [temp_dir_name]
         dist.broadcast_object_list(temp_dir_name_list, src=0)
-        yield pathlib.Path(temp_dir_name_list[0])
-        dist.barrier()
+        try:
+            yield pathlib.Path(temp_dir_name_list[0])
+        finally:
+            dist.barrier()
+            if td is not None:
+                td.cleanup()
