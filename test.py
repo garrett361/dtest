@@ -57,6 +57,13 @@ class TestDTest(DTest):
         self.print_rank0_only(f"{self.num_gpus=}")
         self.print_rank0_only(f"{self.backend=}")
 
+    def test_root_error_visible_on_hang(self) -> None:
+        """Rank 0 fails; rank 1 is stuck in a collective rank 0 won't enter."""
+        if dist.get_rank() == 0:
+            assert False, "intentional rank 0 failure"
+        else:
+            dist.barrier()
+
     @pytest.mark.world_size(4)
     def test_shared_tmp_file(self, world_size: int) -> None:
         filename = "hello.txt"
