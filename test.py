@@ -34,12 +34,20 @@ class TestDTest(DTest):
         self.print_rank0_only(f"{self.world_size=}")
 
     @pytest.mark.world_size(5)
-    def test_non_default_world_size(self, world_size: int) -> None:
+    def test_non_default_world_size(self) -> None:
+        assert self.world_size == 5
         self.print_rank0_only(f"{self.world_size=}")
 
     @pytest.mark.world_size([2, 3, 4])
-    def test_multiple_world_sizes(self, world_size: int) -> None:
+    def test_multiple_world_sizes(self) -> None:
+        assert self.world_size in (2, 3, 4)
         self.print_rank0_only(f"{self.world_size=}")
+
+    # The world_size arg is optional, and was previously required.
+    @pytest.mark.world_size(3)
+    def test_world_size_arg_bc_check(self, world_size: int) -> None:
+        assert world_size == self.world_size == 3
+        self.print_rank0_only(f"{world_size=}")
 
     @pytest.mark.parametrize("n", (2, 3, 4))
     def test_parametrize(self, n) -> None:
@@ -65,7 +73,7 @@ class TestDTest(DTest):
             dist.barrier()
 
     @pytest.mark.world_size(4)
-    def test_shared_tmp_file(self, world_size: int) -> None:
+    def test_shared_tmp_file(self) -> None:
         filename = "hello.txt"
         with self.temp_dir() as tmp_dir:
             shared_file = tmp_dir / filename

@@ -32,6 +32,11 @@ def pytest_configure(config):
 
 def pytest_generate_tests(metafunc):
     """Generate separate test instances for each world_size value, if applicable."""
+    # `world_size` is not a mark name we own exclusively, and this hook runs against every
+    # test in the session, so leave other suites' identically named marks alone.
+    if not (metafunc.cls and issubclass(metafunc.cls, DTest)):
+        return
+
     mark_dict = {
         mark.name: mark for mark in getattr(metafunc.function, "pytestmark", [])
     }
@@ -41,6 +46,11 @@ def pytest_generate_tests(metafunc):
         # Ensure world_sizes is a list
         if not isinstance(world_sizes, (list, tuple)):
             world_sizes = [world_sizes]
+
+        # parametrize only accepts names already in the fixture closure. Adding it lets tests
+        # use the mark without also declaring a `world_size` arg they never read.
+        if "world_size" not in metafunc.fixturenames:
+            metafunc.fixturenames.append("world_size")
 
         # Parametrize the test with world_size values
         metafunc.parametrize(
