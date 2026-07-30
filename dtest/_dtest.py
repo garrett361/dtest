@@ -129,7 +129,7 @@ class DTest:
         self._force_cpu = "cpu" in mark_dict
         self._force_gpu = "gpu" in mark_dict
 
-        # Resolve world_size (after device marks so num_gpus() respects _force_cpu)
+        # Resolve world_size (after device marks so num_gpus respects _force_cpu)
         if (
             hasattr(request.node, "callspec")
             and "world_size" in request.node.callspec.params
@@ -145,7 +145,7 @@ class DTest:
                 raise ValueError(
                     f"{self.__class__.__name__}:{test.__name__}: world_size must be int or 'auto', got {world_size!r}"
                 )
-            world_size = self.num_gpus() or 2
+            world_size = self.num_gpus or 2
 
         self.run(test, test_kwargs, world_size)
 
@@ -176,10 +176,10 @@ class DTest:
             pytest.skip(
                 f"{self.__class__.__name__}:{test.__name__} requires GPUs, but none available."
             )
-        if self.device_type == "cuda" and self.num_gpus() < world_size:
+        if self.device_type == "cuda" and self.num_gpus < world_size:
             pytest.skip(
                 f"Insufficient GPUs available for {self.__class__.__name__}:{test.__name__}:"
-                f" {world_size} required, {self.num_gpus()} available."
+                f" {world_size} required, {self.num_gpus} available."
             )
 
         mp_context = mp.get_context(self.start_method)
@@ -318,6 +318,7 @@ class DTest:
             return "gloo"
         return "nccl"
 
+    @property
     def num_gpus(self) -> int:
         if self.device_type != "cuda":
             return 0
