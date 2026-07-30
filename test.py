@@ -38,15 +38,17 @@ class TestDTest(DTest):
         assert self.world_size == 5
         self.print_rank0_only(f"{self.world_size=}")
 
-    @pytest.mark.world_size([2, 3, 4])
+    # Values exclude the CPU default of 2, so an ignored mark fails rather than passing.
+    @pytest.mark.world_size([3, 4, 5])
     def test_multiple_world_sizes(self) -> None:
-        assert self.world_size in (2, 3, 4)
+        assert self.world_size in (3, 4, 5)
         self.print_rank0_only(f"{self.world_size=}")
 
-    # The world_size arg is optional, and was previously required.
-    @pytest.mark.world_size(3)
+    # The world_size arg is optional, and was previously required. Declaring it is the only
+    # way to pin each generated instance to its own marked value.
+    @pytest.mark.world_size([2, 3, 4])
     def test_world_size_arg_bc_check(self, world_size: int) -> None:
-        assert world_size == self.world_size == 3
+        assert world_size == self.world_size
         self.print_rank0_only(f"{world_size=}")
 
     @pytest.mark.parametrize("n", (2, 3, 4))
