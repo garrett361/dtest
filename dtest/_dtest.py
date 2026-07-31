@@ -24,8 +24,6 @@ import pytest
 import torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
-from _pytest.fixtures import FixtureLookupError
-from _pytest.outcomes import Skipped
 from torch.distributed.elastic.multiprocessing.api import (
     DefaultLogsSpecs,
     MultiprocessContext,
@@ -194,7 +192,7 @@ class DTest:
         for p in params:
             try:
                 fixture_kwargs[p] = request.getfixturevalue(p)
-            except FixtureLookupError:
+            except pytest.FixtureLookupError:
                 pass  # test methods can have kwargs that are not fixtures
         return fixture_kwargs
 
@@ -319,7 +317,7 @@ class DTest:
 
         try:
             test(**test_kwargs)
-        except Skipped as e:
+        except pytest.skip.Exception as e:
             skip_q.put(e.msg)
             return  # parent detects via skip_q and closes context
         except BaseException:
