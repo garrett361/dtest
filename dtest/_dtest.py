@@ -51,22 +51,28 @@ def _closest_mark(node, *names: str):
     order that disagrees with how `skipif` and every other mark resolve, more than one applicable
     mark at one scope is an error.
     """
-    pairs = [(s, m) for s, m in node.iter_markers_with_node() if m.name in names]
-    if not pairs:
+    scoped_marks = [
+        (scope, mark)
+        for scope, mark in node.iter_markers_with_node()
+        if mark.name in names
+    ]
+    if not scoped_marks:
         return None
-    scope, mark = pairs[0]
+    closest_scope, closest_mark = scoped_marks[0]
     # pytest concatenates a class's MRO marks without deduping, so a base and a subclass repeating
     # the same mark are not in conflict. Compare by value; Mark is a frozen dataclass.
-    here = [m for s, m in pairs if s is scope]
-    distinct = [m for i, m in enumerate(here) if m not in here[:i]]
-    if len(distinct) > 1:
-        marked = ", ".join(sorted({repr(m.name) for m in distinct}))
+    marks_at_scope = [mark for scope, mark in scoped_marks if scope is closest_scope]
+    distinct_marks = [
+        mark for i, mark in enumerate(marks_at_scope) if mark not in marks_at_scope[:i]
+    ]
+    if len(distinct_marks) > 1:
+        mark_names = ", ".join(sorted({repr(mark.name) for mark in distinct_marks}))
         raise ValueError(
-            f"{scope.nodeid}: conflicting {marked} marks at one scope, keep a single mark."
-            " A class and its base classes count as one scope, as do a test and the"
+            f"{closest_scope.nodeid}: conflicting {mark_names} marks at one scope, keep a single"
+            " mark. A class and its base classes count as one scope, as do a test and the"
             " pytest.param marks of its parameters."
         )
-    return mark
+    return closest_mark
 
 
 def _resolve_device_marks(instance: "DTest", node) -> None:
@@ -344,15 +350,15 @@ class DTest:
 
     @property
     def rank(self) -> int:
-        return self._rank_env("RANK")
+        return self._worker_env_int("RANK")
 
     @property
     def world_size(self) -> int:
-        return self._rank_env("WORLD_SIZE")
+        return self._worker_env_int("WORLD_SIZE")
 
-    def _rank_env(self, var: str) -> int:
-        # Gated on `_is_worker`, not on the variable, which the parent may have inherited. Defaulting
-        # instead, as this used to, hands a fixture rank 0 of 1: a plausible-looking lie.
+    def _worker_env_int(self, var: str) -> int:
+        # Gated on `_is_worker` rather than on the variable itself, which the parent may have
+        # inherited.
         if not self._is_worker:
             raise RuntimeError(
                 f"{self.__class__.__name__}.{var.lower()} is only meaningful in a spawned rank,"
