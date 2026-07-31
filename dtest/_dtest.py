@@ -112,6 +112,10 @@ class DTest:
     no_nccl_debug: bool = True
     _poll_sec: int = 1
     _init_timeout_sec: int = 30
+    # `__call__` overwrites both per test, but `device_type`/`backend` can be read before it runs:
+    # a class-method fixture resolves against a different instance, which `__call__` never touches.
+    _force_cpu: bool = False
+    _force_gpu: bool = False
     _seed: Optional[int] = 42
 
     def __call__(self, request):
