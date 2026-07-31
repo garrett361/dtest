@@ -16,7 +16,7 @@ import socket
 import tempfile
 import textwrap
 import time
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from random import randint
 from typing import Any, Callable, Generator, Literal, Optional, Union
 
@@ -187,8 +187,13 @@ class DTest:
 
         # Run the test
         skip_q = mp_context.Queue()
-        with tempfile.NamedTemporaryFile() as file:
+        # NOTE: @goon - `delete=False` is load-bearing: `dist.FileStore` unlinks this file once
+        # every rank has destroyed its store, so letting the context manager also unlink it raises
+        # FileNotFoundError. Clean up by hand instead, since FileStore never gets there when a rank
+        # dies early or the run is interrupted.
+        with tempfile.NamedTemporaryFile(delete=False) as file:
             file_name = file.name
+        try:
             args = {
                 r: (test, test_kwargs, skip_q, file_name) for r in range(world_size)
             }
@@ -244,6 +249,9 @@ class DTest:
             except BaseException:
                 context.close()
                 raise
+        finally:
+            with suppress(FileNotFoundError):
+                os.unlink(file_name)
 
     # NOTE: @goon - important to have this record here to successfully capture some types of NCCL
     # errors, it seems.
