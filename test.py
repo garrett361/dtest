@@ -89,6 +89,55 @@ class TestDTest(DTest):
                     self.print_rank(f.read())
 
 
+@pytest.mark.cpu
+@pytest.mark.world_size(3)
+class TestClassLevelMarks(DTest):
+    """Class-level marks apply to every test in the class."""
+
+    def test_class_world_size(self) -> None:
+        assert self.world_size == 3
+
+    def test_class_device(self) -> None:
+        assert self.device_type == "cpu"
+        assert self.backend == "gloo"
+
+
+@pytest.mark.gpu
+class TestMarkPrecedence(DTest):
+    """The closest mark wins."""
+
+    @pytest.mark.cpu
+    def test_method_mark_beats_class_mark(self) -> None:
+        assert self.device_type == "cpu"
+
+    def test_class_mark_applies(self) -> None:
+        # Skips without GPUs.
+        assert self.device_type == "cuda"
+
+
+@pytest.mark.cpu
+@pytest.mark.world_size(3)
+class _MarkedBase(DTest):
+    """Not collected: the name does not start with `Test`."""
+
+
+class TestInheritedMarks(_MarkedBase):
+    """Marks on a base class apply to its subclasses."""
+
+    def test_inherited_marks(self) -> None:
+        assert self.world_size == 3
+        assert self.device_type == "cpu"
+
+
+@pytest.mark.cpu
+@pytest.mark.world_size(3)
+class TestRepeatedMarks(_MarkedBase):
+    """Repeating a base class's mark is fine; only a differing value is a conflict."""
+
+    def test_repeated_marks(self) -> None:
+        assert self.world_size == 3
+
+
 class TestOtherDefaultWorldSizeDTest(DTest):
     requires_cuda_env = False  # Just for running on CPU
     default_world_size = 7

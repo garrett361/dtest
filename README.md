@@ -52,9 +52,28 @@ body wants the value directly:
         assert world_size == self.world_size
 ```
 
-The mark only applies to tests inside a `DTest` subclass, and must be applied to the test
-method itself: class-level and module-level marks are not currently picked up. Elsewhere the
-mark is ignored, so a non-`DTest` test that declares a `world_size` arg will fail with
-`fixture 'world_size' not found`.
+All three marks (`world_size`, `cpu`, `gpu`) resolve the way any other `pytest` mark does: the
+test's own mark wins, then its class's, then its module's.
+
+```python
+pytestmark = pytest.mark.world_size(2)  # applies to every DTest test in the file
+
+
+@pytest.mark.gpu
+@pytest.mark.world_size(4)
+class TestScoping(DTest):
+    def test_inherits(self) -> None:  # gpu, world_size 4
+        ...
+
+    @pytest.mark.cpu
+    def test_overrides(self) -> None:  # cpu, world_size 4
+        ...
+```
+
+Conflicting marks at one scope are an error: `cpu` with `gpu`, or two different `world_size`
+values. A class and its base classes count as one scope.
+
+Priority: a `world_size` mark beats the `default_world_size` attribute. It must be in place by
+collection time, so `add_marker` and `pytest.param(marks=...)` are errors.
 
 See `test.py` for more cases, which also serves as the best documentation.

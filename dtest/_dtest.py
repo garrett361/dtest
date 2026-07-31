@@ -45,6 +45,32 @@ def _format_failure(local_rank: int, message: Union[str, dict]) -> str:
     return textwrap.indent(body, prefix)
 
 
+def _closest_mark(node, *names: str):
+    """The closest mark among `names`, or None.
+
+    Scope resolution is pytest's own: the test, then its class, then its module. Pytest folds a
+    class together with its base classes into a single scope, so rather than invent an inheritance
+    order that disagrees with how `skipif` and every other mark resolve, more than one applicable
+    mark at one scope is an error.
+    """
+    pairs = [(s, m) for s, m in node.iter_markers_with_node() if m.name in names]
+    if not pairs:
+        return None
+    scope, mark = pairs[0]
+    # pytest concatenates a class's MRO marks without deduping, so a base and a subclass repeating
+    # the same mark are not in conflict. Compare by value; Mark is a frozen dataclass.
+    here = [m for s, m in pairs if s is scope]
+    distinct = [m for i, m in enumerate(here) if m not in here[:i]]
+    if len(distinct) > 1:
+        marked = ", ".join(sorted({repr(m.name) for m in distinct}))
+        raise ValueError(
+            f"{scope.nodeid}: conflicting {marked} marks at one scope, keep a single mark."
+            " A class and its base classes count as one scope, as do a test and the"
+            " pytest.param marks of its parameters."
+        )
+    return mark
+
+
 def _get_master_port(
     base_port: int = 29500, port_range_size: int = 1000, max_tries: int = 10
 ) -> str:
@@ -77,6 +103,8 @@ class DTest:
         - can contain multiple tests (each of which can be parametrized separately)
         - class methods can be fixtures (usable by tests in this class only)
         - world_size can be changed for individual tests using @pytest.mark.world_size(world_size)
+        - the world_size, cpu and gpu marks resolve like any other pytest mark: the test's own
+          mark wins, then its class's, then its module's
 
     Usage:
         - class name must start with "Test"
@@ -122,16 +150,9 @@ class DTest:
         test = self._get_current_test_func(request)
         test_kwargs = self._get_fixture_kwargs(request, test)
 
-        mark_dict = {
-            mark.name: mark for mark in getattr(request.function, "pytestmark", [])
-        }
-
-        if "cpu" in mark_dict and "gpu" in mark_dict:
-            raise ValueError(
-                f"{self.__class__.__name__}:{test.__name__}: only one of 'cpu' or 'gpu' may be marked"
-            )
-        self._force_cpu = "cpu" in mark_dict
-        self._force_gpu = "gpu" in mark_dict
+        device = _closest_mark(request.node, "cpu", "gpu")
+        self._force_cpu = device is not None and device.name == "cpu"
+        self._force_gpu = device is not None and device.name == "gpu"
 
         # Resolve world_size (after device marks so num_gpus respects _force_cpu)
         if (
@@ -139,9 +160,14 @@ class DTest:
             and "world_size" in request.node.callspec.params
         ):
             world_size = request.node.callspec.params["world_size"]
-        elif "world_size" in mark_dict:
-            world_size = mark_dict["world_size"].args[0]
         else:
+            # A collection-time mark always parametrizes, so one still visible here arrived too late
+            # to generate test instances. Better to say so than to silently use the wrong size.
+            if _closest_mark(request.node, "world_size") is not None:
+                raise ValueError(
+                    f"{self.__class__.__name__}:{test.__name__}: 'world_size' marks must be applied"
+                    " to the test, its class, or its module, not via add_marker or pytest.param"
+                )
             world_size = test_kwargs.get("world_size", self.default_world_size)
 
         if isinstance(world_size, str):
