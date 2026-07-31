@@ -149,3 +149,60 @@ class TestOtherDefaultWorldSizeDTest(DTest):
 def test_regular():
     print("In regular test")
     assert True
+
+
+@pytest.mark.parametrize("prop", ("device_type", "backend", "device", "num_gpus"))
+def test_device_props_raise_before_marks_resolve(prop: str) -> None:
+    """`device` and `num_gpus` are only guarded through `device_type`, so cover all four."""
+    with pytest.raises(RuntimeError, match="marks are not resolved"):
+        getattr(DTest(), prop)
+
+
+@pytest.mark.parametrize("prop", ("rank", "world_size"))
+def test_rank_props_ignore_an_inherited_env(prop: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A RANK the parent happened to inherit is not this process's, so it must not be read."""
+    monkeypatch.setenv("RANK", "0")
+    monkeypatch.setenv("WORLD_SIZE", "1")
+    with pytest.raises(RuntimeError, match="only meaningful in a spawned rank"):
+        getattr(DTest(), prop)
+
+
+@pytest.mark.gpu
+@pytest.mark.world_size(2)
+class TestFixtureDeviceScopes(DTest):
+    """Only function-scoped fixtures can see the device marks."""
+
+    @pytest.fixture
+    def device_function_scoped(self) -> str:
+        # The class is marked gpu and this method overrides it, so the flags prove the mark was
+        # resolved per test. Asserting `device_type` alone would not: it is "cpu" either way here.
+        assert (self._force_cpu, self._force_gpu) == (True, False)
+        return self.device_type
+
+    @pytest.fixture(scope="class")
+    def device_class_scoped(self) -> str:
+        # Bound to a collection-time instance shared by every test in the class, so a per-test
+        # mark has no single right answer to give it.
+        with pytest.raises(RuntimeError, match="marks are not resolved"):
+            _ = self.device_type
+        return "raised"
+
+    @pytest.fixture
+    def rank_in_fixture(self) -> str:
+        # Unreachable by any mark: the parent is not a rank.
+        for prop in ("rank", "world_size", "device"):
+            with pytest.raises(RuntimeError, match="only meaningful in a spawned rank"):
+                getattr(self, prop)
+        return "raised"
+
+    @pytest.mark.cpu
+    def test_device_by_fixture_scope(
+        self, device_function_scoped: str, device_class_scoped: str, rank_in_fixture: str
+    ) -> None:
+        assert device_function_scoped == "cpu"
+        assert device_class_scoped == "raised"
+        assert rank_in_fixture == "raised"
+        # All of them resolve in the body, the only place they are meaningful.
+        assert self.device_type == "cpu"
+        assert self.world_size == 2
+        assert self.rank in range(2)

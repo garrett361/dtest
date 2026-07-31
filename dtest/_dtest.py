@@ -69,6 +69,13 @@ def _closest_mark(node, *names: str):
     return mark
 
 
+def _resolve_device_marks(instance: "DTest", node) -> None:
+    """Record the closest cpu/gpu mark on `instance`."""
+    device = _closest_mark(node, "cpu", "gpu")
+    instance._force_cpu = device is not None and device.name == "cpu"
+    instance._force_gpu = device is not None and device.name == "gpu"
+
+
 def _get_master_port(
     base_port: int = 29500, port_range_size: int = 1000, max_tries: int = 10
 ) -> str:
@@ -99,7 +106,10 @@ class DTest:
         - able to call pytest.skip() inside tests
         - works with pytest fixtures, parametrize, mark, etc.
         - can contain multiple tests (each of which can be parametrized separately)
-        - class methods can be fixtures (usable by tests in this class only)
+        - class methods can be fixtures (usable by tests in this class only), but they run in the
+          parent rather than in a rank: `rank`, `world_size`, `device` and anything built on them
+          raise there, and `device_type`, `backend` and `num_gpus` raise unless the fixture is
+          function-scoped
         - world_size can be changed for individual tests using @pytest.mark.world_size(world_size)
         - the world_size, cpu and gpu marks resolve like any other pytest mark: the test's own
           mark wins, then its class's, then its module's
@@ -138,19 +148,20 @@ class DTest:
     no_nccl_debug: bool = True
     _poll_sec: int = 1
     _init_timeout_sec: int = 30
-    # `__call__` overwrites both per test, but `device_type`/`backend` can be read before it runs:
-    # a class-method fixture resolves against a different instance, which `__call__` never touches.
-    _force_cpu: bool = False
-    _force_gpu: bool = False
+    # `None` rather than False until the cpu/gpu marks are resolved, so a read that cannot see them
+    # raises instead of reporting the wrong device. Only `_force_cpu` needs it; `_force_gpu` is read
+    # only by `run`, after the assignment.
+    _force_cpu: Optional[bool] = None
+    _force_gpu: Optional[bool] = None
+    # True only on the copy of this instance that `_dist_run` unpickles inside a spawned rank.
+    _is_worker: bool = False
     _seed: Optional[int] = 42
 
     def __call__(self, request):
         test = self._get_current_test_func(request)
         test_kwargs = self._get_fixture_kwargs(request, test)
 
-        device = _closest_mark(request.node, "cpu", "gpu")
-        self._force_cpu = device is not None and device.name == "cpu"
-        self._force_gpu = device is not None and device.name == "gpu"
+        _resolve_device_marks(self, request.node)
 
         # Resolve world_size (after device marks so num_gpus respects _force_cpu)
         if (
@@ -291,6 +302,7 @@ class DTest:
         skip_q: mp.Queue,
         file_name: str,
     ):
+        self._is_worker = True
         rank = local_rank = int(os.environ["RANK"])
         world_size = int(os.environ["WORLD_SIZE"])
 
@@ -332,15 +344,37 @@ class DTest:
 
     @property
     def rank(self) -> int:
-        return int(os.getenv("RANK", 0))
+        return self._rank_env("RANK")
 
     @property
     def world_size(self) -> int:
-        return int(os.getenv("WORLD_SIZE", 1))
+        return self._rank_env("WORLD_SIZE")
+
+    def _rank_env(self, var: str) -> int:
+        # Gated on `_is_worker`, not on the variable, which the parent may have inherited. Defaulting
+        # instead, as this used to, hands a fixture rank 0 of 1: a plausible-looking lie.
+        if not self._is_worker:
+            raise RuntimeError(
+                f"{self.__class__.__name__}.{var.lower()} is only meaningful in a spawned rank,"
+                " so it is unavailable in a fixture or anywhere else in the parent."
+            )
+        return int(os.environ[var])
+
+    def _check_device_marks_resolved(self) -> None:
+        # Names no property: `device` and `num_gpus` arrive through `device_type`, and naming that
+        # would point at code the caller did not write.
+        if self._force_cpu is None:
+            raise RuntimeError(
+                f"{self.__class__.__name__}: the 'cpu' and 'gpu' marks are not resolved on this"
+                " instance. They are per test, so a class-scoped fixture cannot see them; make the"
+                " fixture function-scoped, or read the device in the test body."
+            )
 
     @property
     def device_type(self) -> str:
-        if not torch.cuda.is_available() or self._force_cpu:
+        # Before the cuda call, so an unresolved read raises whether or not GPUs are present.
+        self._check_device_marks_resolved()
+        if self._force_cpu or not torch.cuda.is_available():
             return "cpu"
         return "cuda"
 
@@ -350,7 +384,8 @@ class DTest:
 
     @property
     def backend(self) -> str:
-        if not torch.cuda.is_available() or self._force_cpu:
+        self._check_device_marks_resolved()
+        if self._force_cpu or not torch.cuda.is_available():
             return "gloo"
         return "nccl"
 

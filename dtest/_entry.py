@@ -11,14 +11,38 @@
 import pytest
 
 from dtest import DTest
-from dtest._dtest import _closest_mark
+from dtest._dtest import _closest_mark, _resolve_device_marks
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_runtest_setup(item):
+    # Fixtures bind to `item.instance`, a different object from the one `pytest_runtest_call`
+    # builds below, so resolve the device marks onto it as well, before any fixture runs. Only
+    # function-scoped fixtures get this: a class-scoped one binds to a third instance shared by the
+    # whole class, which no per-test mark can describe.
+    # `getattr`, since non-python items such as doctests have no `cls` at all.
+    cls = getattr(item, "cls", None)
+    if not (cls and issubclass(cls, DTest)):
+        return
+    problem = None
+    try:
+        _resolve_device_marks(item.instance, item)
+    except ValueError as e:
+        problem = str(e)
+    if problem is not None:
+        # Reported here rather than left to the call phase, so a fixture reading a device property
+        # cannot trip the unresolved-marks guard first and blame the wrong thing. Outside the
+        # `except` so pytest does not also render the original traceback, as in
+        # `pytest_generate_tests` below.
+        pytest.fail(problem, pytrace=False)  # ty: ignore
 
 
 @pytest.hookimpl(tryfirst=True)
 def pytest_runtest_call(item):
     # We want to use our own launching function for distributed tests
-    if item.cls and issubclass(item.cls, DTest):
-        dist_test_class = item.cls()
+    cls = getattr(item, "cls", None)
+    if cls and issubclass(cls, DTest):
+        dist_test_class = cls()
         dist_test_class(item._request)
         item.runtest = lambda: True  # Dummy function so test is not run twice
 
